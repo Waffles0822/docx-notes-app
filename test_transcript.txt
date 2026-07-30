@@ -1,0 +1,9 @@
+Good morning everyone. Today we will discuss the concept of machine learning.
+Machine learning is a subset of artificial intelligence that enables systems to learn from data.
+The three main types are supervised learning, unsupervised learning, and reinforcement learning.
+Supervised learning uses labeled data to train models. For example, classifying emails as spam or not spam.
+Unsupervised learning finds patterns in unlabeled data. For example, grouping customers by purchasing behavior.
+Reinforcement learning uses rewards and punishments to train agents. For example, training a robot to walk.
+The key equation for linear regression is y equals mx plus b where m is the slope and b is the intercept.
+Remember that the midterm exam is next Thursday. Please review chapters 5 through 8.
+Are there any questions? Yes, the project deadline has been extended to Friday.
