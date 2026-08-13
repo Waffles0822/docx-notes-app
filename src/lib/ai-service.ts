@@ -13,13 +13,24 @@ Build a deep, richly nested outline rather than a flat list. Whenever a point ca
 
 Parent bullets state the general point; their nested children carry the specifics. For example, a parent naming a regulatory body should have its individual duties nested beneath it, and a parent stating that pollutants were reduced should have each pollutant and its figure nested beneath it as separate child bullets.
 
-Write one complete, standalone idea per bullet, and do not restate the sub-header's topic inside every bullet beneath it. Do not attribute routine facts, deadlines, or requirements to the instructor; state them directly as facts, and only name the instructor when the point is specifically their personal opinion, judgment call, or something said in a subjective capacity.
+Write one complete, standalone idea per bullet, and do not restate the sub-header's topic inside every bullet beneath it.
+
+FIRST-LEVEL BULLET HEADINGS
+A first-level bullet that has bullets nested under it is a heading, not a sentence. Write it as a short noun phrase naming the topic its nested bullets explain, for example Enforcement Mechanisms, Sources of Air Pollution, or Steps of the Titration Process. Use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word. Never end it with a period, never write it in sentence format, and never build it around a finite verb, so write Reduction of Lead Emissions rather than Lead emissions were reduced. Keep it to roughly two to six words and push every fact, figure, and qualifier down into the bullets nested beneath it. A first-level bullet with nothing nested under it is not a heading and stays an ordinary sentence.
 
 If several consecutive bullets under the same parent would start with the same lead-in phrase and none of them carries its own supporting detail, merge them into a single bullet that states the lead-in once and lists every item after it, comma-separated. If those items each carry their own supporting detail, do the opposite: write the lead-in once as a parent bullet and nest each item beneath it as its own child bullet.
 
-Leaf bullets that name a single term, item, figure, or label may be short fragments and need no period. Bullets that state a full sentence must end with a period.
+End every bullet that states a full sentence with a period, without exception. Bullets that name only a single term, item, figure, or label are fragments rather than sentences and take no period, and first-level bullet headings never take one either.
 
 Write concrete and self-contained bullets. Every bullet must identify its subject and state a specific fact, meaning, relationship, step, example, or consequence from the transcript. Correct obvious speech-to-text grammar while preserving meaning. Resolve vague pronouns when the referent is clear. For analogies, name the concept being explained, identify what each important element represents, and state the point directly. Do not write empty observations such as an analogy can reveal a need for focus, the discussion highlights the importance of a topic, or a concept helps improve understanding. Do not use tentative phrases such as may, might, can, or could unless the transcript expressed uncertainty or possibility. Remove stale, generic, circular, fragmentary, and duplicated statements.
+
+POINT OF VIEW AND ATTRIBUTION
+Write every note in the third person. Never use first-person or second-person words such as I, me, my, we, us, our, ours, you, your, yours, or let us, and rewrite anything the transcript phrased that way as an impersonal third-person statement, so write Students must submit the draft by Friday rather than You must submit your draft by Friday.
+
+Never mention the instructor. Do not write the instructor, the professor, the lecturer, the teacher, the speaker, or any personal name, and do not attribute a point to a person with verbs such as said, noted, stated, explained, emphasized, mentioned, discussed, or reminded. State every fact, deadline, requirement, opinion, and judgment directly on its own, so write The midterm covers the first four chapters rather than The instructor said the midterm covers the first four chapters.
+
+CONCISION
+Keep every bullet short and to the point. Write it in the fewest words that still carry the fact, and cut padding openers such as it is important to note that, it should be remembered that, the discussion covered, and this section explains. Do not echo the wording of the sub-header or the parent bullet inside a child bullet, and never state the same fact at two different levels of the outline.
 
 Do not include routine classroom filler or administrative commentary unless it contains a specific instruction, deadline, concept, or assessment detail. Examples of text to omit include the instructor will answer questions during class, we will talk about this later, let us continue, and similar vague bridging lines.
 
@@ -35,14 +46,14 @@ Return HTML only, using this structure and nesting depth as the model to follow.
   <section class="announcements">
     <h3>Specific Sub-Header Topic</h3>
     <ul>
-      <li>General point that has supporting detail beneath it.
+      <li>Title Case Heading Naming This Group
         <ul>
-          <li>Specific condition or requirement supporting the point above.
+          <li>Specific condition or requirement stated as a full sentence.
             <ul>
               <li>Individual figure, item, or qualifier</li>
             </ul>
           </li>
-          <li>Another specific detail supporting the same point.</li>
+          <li>Another specific detail supporting the same heading.</li>
         </ul>
       </li>
       <li>Standalone point with no supporting detail in the transcript.</li>
@@ -51,17 +62,22 @@ Return HTML only, using this structure and nesting depth as the model to follow.
   <section class="lecture">
     <h3>Specific Sub-Header Topic</h3>
     <ul>
-      <li>General point introducing a breakdown.
+      <li>Named Components of the Process
         <ul>
           <li>First named item</li>
           <li>Second named item</li>
         </ul>
       </li>
-      <li>Point stating a result that involves an expression such as <math>2\\pi - \\arctan(3/2)</math>.
+      <li>Conversion to Polar Coordinates
         <ul>
-          <li>Supporting detail naming the value <math>\\frac{\\pi}{4}</math></li>
+          <li>The converted point equals <math>\\left(\\sqrt{13}, 2\\pi - \\arctan(3/2)\\right)</math>.
+            <ul>
+              <li>Reference angle of <math>\\frac{\\pi}{4}</math></li>
+            </ul>
+          </li>
         </ul>
       </li>
+      <li>Standalone point stating a single fact the transcript gave no supporting detail for.</li>
     </ul>
   </section>
 </div>

@@ -195,13 +195,17 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
 
   function renderBullets(bullets: Bullet[], level: number) {
     for (const bullet of bullets) {
+      // A first-level bullet carrying nested bullets is written as a Title Case heading
+      // rather than a sentence, so it is bolded to show that role on the page. A
+      // first-level bullet with no children is an ordinary sentence and stays plain.
+      const isHeading = level === 0 && bullet.children.length > 0
       children.push(new Paragraph({
         numbering: { reference: BULLET_REFERENCE, level },
         // keepNext holds a parent bullet with the children that explain it, so a nested
         // group never splits away from the point it belongs to.
         keepNext: bullet.children.length > 0,
         spacing: { after: 20, line: 259 },
-        children: buildRichRuns(bullet.text, { font: FONT, size: BODY_SIZE }),
+        children: buildRichRuns(bullet.text, { font: FONT, size: BODY_SIZE, bold: isHeading }),
       }))
       if (bullet.children.length) renderBullets(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL))
     }
