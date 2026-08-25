@@ -140,9 +140,24 @@ function extractGroupSection(html: string, cls: "announcements" | "lecture"): Su
   return match ? extractSubsections(match[1]) : []
 }
 
+// Reminders (quizzes, exams, deadlines) always lead the notes. Chunked transcripts are
+// merged section by section, so the model can emit a Reminders sub-header per chunk and
+// not necessarily first; this folds them into one and moves it to the front.
+function hoistReminders(subs: SubSection[]): SubSection[] {
+  const isReminders = (sub: SubSection) => /^reminders?$/i.test(sub.heading.trim())
+  const reminders = subs.filter(isReminders)
+  if (!reminders.length) return subs
+
+  const merged: SubSection = {
+    heading: "Reminders",
+    bullets: reminders.flatMap((sub) => sub.bullets),
+  }
+  return [merged, ...subs.filter((sub) => !isReminders(sub))]
+}
+
 function parseNotes(html: string): { announcements: SubSection[]; lecture: SubSection[] } {
   return {
-    announcements: extractGroupSection(html, "announcements"),
+    announcements: hoistReminders(extractGroupSection(html, "announcements")),
     lecture: extractGroupSection(html, "lecture"),
   }
 }
