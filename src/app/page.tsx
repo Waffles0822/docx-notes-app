@@ -144,7 +144,9 @@ export default function Home() {
                       {generationProgress.jobStatuses.map((job, idx) => (
                         <div key={job.id} className="flex justify-between gap-2">
                           <span>Section {idx + 1}</span>
-                          <span className="text-primary">{job.progress}%</span>
+                          <span className="text-primary">
+                            {job.status === "retrying" ? "Retrying" : job.status === "queued" ? "Queued" : `${job.progress}%`}
+                          </span>
                         </div>
                       ))}
                     </div>

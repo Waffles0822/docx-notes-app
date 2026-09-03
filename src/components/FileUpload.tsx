@@ -148,7 +148,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
       const job = await response.json()
       if (!response.ok) throw new Error(job.error || "Failed to start note generation.")
 
-      let jobs: Array<{ id: string; targetWords: number; expanded: boolean }> = job.jobs
+      let jobs: Array<{ id: string; targetWords: number; expanded: boolean; retries?: number }> = job.jobs
       const downloadName: string = job.downloadName || "Organized Notes.docx"
       const pageCount: number = job.pageCount || pages
       const resolvedTitleName: string = job.titleName ?? titleName

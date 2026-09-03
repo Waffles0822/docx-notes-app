@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { expandBackgroundNotes, getBackgroundNoteStatus, mergeNoteSections, type BackgroundNoteJob } from "@/lib/ai-service"
+import { expandBackgroundNotes, getBackgroundNoteStatus, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
 import { createNotesDocx } from "@/lib/docx-generator"
 
 type JobStatus = {
@@ -11,6 +11,9 @@ type JobStatus = {
 // The final poll assembles the .docx, and an expansion pass may start new OpenAI jobs.
 export const maxDuration = 60
 export const runtime = "nodejs"
+
+const QUEUED_RETRY_MS = 3 * 60 * 1000
+const QUEUED_FAILURE_MS = 5 * 60 * 1000
 
 function getJobProgress(status: string, truncated: boolean): number {
   if (status === "completed") return 100
@@ -29,6 +32,7 @@ export async function POST(request: NextRequest) {
           return typeof candidate.id === "string" && /^resp_[a-zA-Z0-9_-]+$/.test(candidate.id)
             && typeof candidate.targetWords === "number" && candidate.targetWords >= 100 && candidate.targetWords <= 10000
             && typeof candidate.expanded === "boolean"
+            && (candidate.retries === undefined || (Number.isInteger(candidate.retries) && candidate.retries >= 0 && candidate.retries <= 1))
         }).slice(0, 20)
       : []
     const downloadName = typeof body.downloadName === "string"
@@ -53,6 +57,37 @@ export async function POST(request: NextRequest) {
     const failed = statuses.find((job) => ["failed", "cancelled", "incomplete"].includes(job.status))
     if (failed) {
       return NextResponse.json({ error: failed.error || "A note section failed to generate." }, { status: 500 })
+    }
+
+    const now = Date.now()
+    const queuedAges = statuses.map((status) =>
+      status.status === "queued" && typeof status.createdAt === "number"
+        ? now - status.createdAt * 1000
+        : 0
+    )
+    const exhaustedJob = jobs.find((job, index) => (job.retries || 0) >= 1 && queuedAges[index] >= QUEUED_FAILURE_MS)
+    if (exhaustedJob) {
+      return NextResponse.json(
+        { error: "OpenAI kept one note section queued after an automatic retry. Please try again when provider demand is lower." },
+        { status: 504 }
+      )
+    }
+
+    const needsRetry = jobs.map((job, index) => (job.retries || 0) < 1 && queuedAges[index] >= QUEUED_RETRY_MS)
+    if (needsRetry.some(Boolean)) {
+      const updatedJobs = await Promise.all(jobs.map((job, index) =>
+        needsRetry[index] ? retryQueuedBackgroundNotes(job) : job
+      ))
+      return NextResponse.json({
+        status: "processing",
+        completed: statuses.filter((status) => status.status === "completed").length,
+        total: statuses.length,
+        jobs: updatedJobs,
+        jobStatuses: jobStatuses.map((jobStatus, index) => needsRetry[index]
+          ? { id: updatedJobs[index].id, status: "retrying", progress: 10 }
+          : jobStatus),
+        progressPercent: Math.round(jobStatuses.reduce((sum, item) => sum + item.progress, 0) / jobStatuses.length),
+      })
     }
 
     const completed = statuses.filter((job) => job.status === "completed")

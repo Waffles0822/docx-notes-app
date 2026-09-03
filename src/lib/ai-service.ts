@@ -275,12 +275,14 @@ type BackgroundNoteStatus = {
   notes?: string
   error?: string
   truncated?: boolean
+  createdAt?: number
 }
 
 export type BackgroundNoteJob = {
   id: string
   targetWords: number
   expanded: boolean
+  retries?: number
 }
 
 function getOpenAIKey(): string {
@@ -375,8 +377,47 @@ export async function startBackgroundNotes(transcript: string, pages: number): P
     const sourceWords = chunk.split(/\s+/).filter(Boolean).length
     const targetWords = Math.min(chunkPages * WORDS_PER_PAGE, Math.max(250, Math.floor(sourceWords * 0.82)))
     const id = await submitBackgroundChunk(apiKey, chunk, chunkPages, index + 1, chunks.length, targetWords)
-    return { id, targetWords, expanded: false }
+    return { id, targetWords, expanded: false, retries: 0 }
   }))
+}
+
+export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promise<BackgroundNoteJob> {
+  const apiKey = getOpenAIKey()
+  const source = await getOpenAIJson(
+    `https://api.openai.com/v1/responses/${encodeURIComponent(job.id)}`,
+    apiKey,
+    30000
+  )
+  if (!source.response.ok || !source.data.input) {
+    throw new Error(source.data?.error?.message || "Could not recover the queued note section.")
+  }
+
+  const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
+    model: source.data.model || process.env.OPENAI_MODEL || "gpt-5.6-terra",
+    instructions: source.data.instructions || SYSTEM_PROMPT,
+    input: source.data.input,
+    text: { verbosity: "medium" },
+    reasoning: { effort: "low" },
+    max_output_tokens: source.data.max_output_tokens || computeMaxOutputTokens(job.targetWords),
+    background: true,
+  }, 60000)
+  if (!response.ok || !data?.id) {
+    throw new Error(data?.error?.message || "OpenAI could not restart the queued note section.")
+  }
+
+  // The replacement is safely accepted, so stop the abandoned job when possible.
+  try {
+    await postOpenAIJson(
+      `https://api.openai.com/v1/responses/${encodeURIComponent(job.id)}/cancel`,
+      apiKey,
+      {},
+      15000
+    )
+  } catch {
+    // The replacement can proceed even if the already-stalled response cannot be cancelled.
+  }
+
+  return { ...job, id: data.id, retries: (job.retries || 0) + 1 }
 }
 
 export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords: number, wasTruncated = false): Promise<BackgroundNoteJob> {
@@ -423,7 +464,7 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
 
   if (data.status === "completed") {
     try {
-      return { id, status: "completed", notes: cleanResponse(extractOutputText()) }
+      return { id, status: "completed", notes: cleanResponse(extractOutputText()), createdAt: data.created_at }
     } catch (error) {
       return { id, status: "failed", error: error instanceof Error ? error.message : "OpenAI returned empty notes" }
     }
@@ -434,7 +475,7 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
     // check that already asks OpenAI to lengthen thin notes will pick this up and ask it to
     // regenerate with a larger budget, instead of surfacing a hard error to the user.
     try {
-      return { id, status: "completed", notes: cleanResponse(extractOutputText()), truncated: true }
+      return { id, status: "completed", notes: cleanResponse(extractOutputText()), truncated: true, createdAt: data.created_at }
     } catch {
       return { id, status: "completed", notes: "", truncated: true }
     }
@@ -446,7 +487,7 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
       error: data.error?.message || data.incomplete_details?.reason || `OpenAI job ${data.status}`,
     }
   }
-  return { id, status: data.status || "in_progress" }
+  return { id, status: data.status || "in_progress", createdAt: data.created_at }
 }
 
 function extractSectionHtml(html: string, cls: "announcements" | "lecture"): string {
