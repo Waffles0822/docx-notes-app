@@ -1,12 +1,12 @@
 import { AlignmentType, BorderStyle, Document, LevelFormat, Packer, Paragraph, TextRun } from "docx"
 import { buildRichRuns, normalizeMathInProse } from "./math-format"
 
-type Bullet = {
+export type Bullet = {
   text: string
   children: Bullet[]
 }
 
-type SubSection = {
+export type SubSection = {
   heading: string
   bullets: Bullet[]
 }
@@ -18,10 +18,10 @@ export type NotesMeta = {
 
 const BULLET_REFERENCE = "notes-bullets"
 const MAX_BULLET_LEVEL = 3
-// Half-points: 24 = 12pt body text, 26 = 13pt group headings.
-const BODY_SIZE = 24
-const GROUP_HEADING_SIZE = 26
-const FONT = "Verdana"
+// Half-points: 22 = 11pt body text, 24 = 12pt group headings.
+const BODY_SIZE = 22
+const GROUP_HEADING_SIZE = 24
+const FONT = "Arial"
 
 function decodeHtml(value: string): string {
   return value
@@ -155,18 +155,17 @@ function hoistReminders(subs: SubSection[]): SubSection[] {
   return [merged, ...subs.filter((sub) => !isReminders(sub))]
 }
 
-function parseNotes(html: string): { announcements: SubSection[]; lecture: SubSection[] } {
+export function parseNotes(html: string): { announcements: SubSection[]; lecture: SubSection[] } {
   return {
     announcements: hoistReminders(extractGroupSection(html, "announcements")),
     lecture: extractGroupSection(html, "lecture"),
   }
 }
 
-// Mirrors the glyph progression of the reference document: filled circle, hollow
-// circle, filled square, then repeating. Each level indents by 0.25" with a hanging
-// indent so wrapped lines align under the text rather than under the glyph.
+// Shaded circle bullets for all levels (fisheye ◉, hollow circle ○, filled square ■, repeat).
+// Each level indents by 0.25" with a hanging indent so wrapped lines align under the text.
 function buildBulletLevels() {
-  const glyphs = ["●", "○", "■", "●"]
+  const glyphs = ["◉", "○", "■", "◉"]
   return glyphs.map((text, level) => ({
     level,
     format: LevelFormat.BULLET,

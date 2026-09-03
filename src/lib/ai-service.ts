@@ -6,7 +6,13 @@ TOP-LEVEL STRUCTURE
 Sort all transcript content into up to two top-level groups, in this order: announcements content (reminders, assessments, deadlines, housekeeping, course adjustments, logistics, schedule changes) and lecture content (topic material, definitions, explanations, examples, equations, formulas). Omit a group entirely if the transcript has no content for it. Do not write the group name yourself (do not output the words Announcements or Lecture); the surrounding application supplies those labels.
 
 REMINDERS
-The very first sub-header of the announcements group is always Reminders, and it comes before every other sub-header in the notes. Collect under it every quiz, exam, test, assessment, assignment, project, submission, deadline, due date, required material, and anything else the transcript flags as something to remember or prepare for, each with its date, coverage, format, and conditions nested beneath it. Write this sub-header exactly as Reminders and place it first even when the transcript mentions the items late or scattered throughout. Omit the Reminders sub-header only when the transcript contains no such item at all, and never invent one to fill it. Do not repeat a reminder again under a later sub-header.
+The very first sub-header of the announcements group is always Reminders, and it comes before every other sub-header in the notes. Collect under it every quiz, exam, test, assessment, assignment, project, submission, deadline, due date, required material, and anything else the transcript flags as something to remember or prepare for. Write this sub-header exactly as Reminders and place it first even when the transcript mentions the items late or scattered throughout. Omit the Reminders sub-header only when the transcript contains no such item at all, and never invent one to fill it. Do not repeat a reminder again under a later sub-header.
+
+ALL REMINDERS MUST BE FLAT BULLETS DIRECTLY UNDER THE REMINDERS SUB-HEADER — NO NESTING. Each reminder is a single bullet stating the assessment, its date, coverage, format, and conditions in one complete sentence. Do not create parent bullets with nested children for reminders. Example:
+<ul>
+  <li>Midterm exam scheduled for March 15 covering Chapters 1–4, multiple-choice format, closed book.</li>
+  <li>Project proposal due February 28, must include research question and methodology.</li>
+</ul>
 
 SUB-HEADERS
 Within each group, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Housekeeping and Course Adjustments, Clean Air Act, Pollution Management). Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
@@ -21,7 +27,9 @@ Write one complete, standalone idea per bullet, and do not restate the sub-heade
 FIRST-LEVEL BULLET HEADINGS
 A first-level bullet that has bullets nested under it is a heading, not a sentence. Write it as a short noun phrase naming the topic its nested bullets explain, for example Enforcement Mechanisms, Sources of Air Pollution, or Steps of the Titration Process. Use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word. Never end it with a period, never write it in sentence format, and never build it around a finite verb, so write Reduction of Lead Emissions rather than Lead emissions were reduced. Keep it to roughly two to six words and push every fact, figure, and qualifier down into the bullets nested beneath it. A first-level bullet with nothing nested under it is not a heading and stays an ordinary sentence.
 
-Never repeat the same sentence opening, subject, or lead-in phrase across bullets. Whenever two or more bullets under the same parent would share a phrase, lift that shared phrase out into a single bullet of its own and nest the differing parts beneath it as child bullets, so the shared wording is written once and each sub-list sits under it. When the sharing bullets are plain items that carry no supporting detail of their own, collapse them instead into one bullet that states the lead-in once and lists the items after it, comma-separated. This applies whether or not the bullets sit next to each other.
+NEVER REPEAT THE SAME SENTENCE OPENING, SUBJECT, OR LEAD-IN PHRASE ACROSS BULLETS. This includes repeated pronouns (e.g., "She is...", "She is...", "He said...", "He said..."), repeated nouns, or repeated verb phrases. Whenever two or more bullets under the same parent would share a phrase, lift that shared phrase out into a single bullet of its own and nest the differing parts beneath it as child bullets, so the shared wording is written once and each sub-list sits under it. When the sharing bullets are plain items that carry no supporting detail of their own, collapse them instead into one bullet that states the lead-in once and lists the items after it, comma-separated. This applies whether or not the bullets sit next to each other.
+
+NO DUPLICATION ANYWHERE. Never state the same fact, definition, example, or detail more than once in the entire document. If a fact appears in multiple places in the transcript, include it only once in the notes, at the most relevant location. Do not repeat information across different sub-headers, different nesting levels, or between announcements and lecture sections.
 
 End every bullet that states a full sentence with a period, without exception. Bullets that name only a single term, item, figure, or label are fragments rather than sentences and take no period, and first-level bullet headings never take one either.
 
@@ -49,12 +57,8 @@ Return HTML only, using this structure and nesting depth as the model to follow.
   <section class="announcements">
     <h3>Reminders</h3>
     <ul>
-      <li>Upcoming Quiz
-        <ul>
-          <li>Scheduled for the date given in the transcript.</li>
-          <li>Covers the stated topics.</li>
-        </ul>
-      </li>
+      <li>Midterm exam scheduled for March 15 covering Chapters 1–4, multiple-choice format, closed book.</li>
+      <li>Project proposal due February 28, must include research question and methodology.</li>
     </ul>
     <h3>Specific Sub-Header Topic</h3>
     <ul>
@@ -100,7 +104,7 @@ export interface AIService {
   generateNotes(transcript: string, pages: number): Promise<string>
 }
 
-export const MAX_PAGES = 25
+export const MAX_PAGES = 80
 
 // Words that fit on one page of the generated layout (12pt Verdana, 0.75" margins,
 // nested bullets). Verdana is a wide typeface, so this sits well below the count a
@@ -214,7 +218,11 @@ function describeFetchFailure(error: unknown, endpoint: string): string {
   return error.message
 }
 
-async function parseJsonResponse(response: Response): Promise<any> {
+// External AI providers return several incompatible JSON response shapes.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ApiResponse = Record<string, any>
+
+async function parseJsonResponse(response: Response): Promise<ApiResponse> {
   const text = await response.text()
   if (!text.trim()) return {}
   try {
@@ -224,7 +232,7 @@ async function parseJsonResponse(response: Response): Promise<any> {
   }
 }
 
-async function postOpenAIJson(endpoint: string, apiKey: string, body: Record<string, unknown>, timeoutMs: number): Promise<{ response: Response; data: any }> {
+async function postOpenAIJson(endpoint: string, apiKey: string, body: Record<string, unknown>, timeoutMs: number): Promise<{ response: Response; data: ApiResponse }> {
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -242,7 +250,7 @@ async function postOpenAIJson(endpoint: string, apiKey: string, body: Record<str
   }
 }
 
-async function getOpenAIJson(endpoint: string, apiKey: string, timeoutMs: number): Promise<{ response: Response; data: any }> {
+async function getOpenAIJson(endpoint: string, apiKey: string, timeoutMs: number): Promise<{ response: Response; data: ApiResponse }> {
   try {
     const response = await fetch(endpoint, {
       method: "GET",
@@ -351,7 +359,14 @@ async function submitBackgroundChunk(
 
 export async function startBackgroundNotes(transcript: string, pages: number): Promise<BackgroundNoteJob[]> {
   const apiKey = getOpenAIKey()
-  const chunks = splitTranscript(transcript, Math.ceil(pages / 5))
+  // Use larger chunks for larger documents to reduce API calls and avoid timeouts
+  // 1-10 pages: 5 pages per chunk, 11-30: 8 pages, 31-50: 10 pages, 51+: 12 pages
+  let pagesPerChunk = 5
+  if (pages > 50) pagesPerChunk = 12
+  else if (pages > 30) pagesPerChunk = 10
+  else if (pages > 10) pagesPerChunk = 8
+
+  const chunks = splitTranscript(transcript, Math.ceil(pages / pagesPerChunk))
   const basePages = Math.floor(pages / chunks.length)
   const extraPages = pages % chunks.length
 
@@ -387,7 +402,7 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
 
 export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNoteStatus> {
   let response: Response
-  let data: any
+  let data: ApiResponse
   try {
     const result = await getOpenAIJson(`https://api.openai.com/v1/responses/${encodeURIComponent(id)}`, getOpenAIKey(), 30000)
     response = result.response

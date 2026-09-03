@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useRef, useState } from "react"
-import { FileText, Loader2, Sparkles, Upload, Wand2, X } from "lucide-react"
+import { FileText, Loader2, Sparkles, Upload, Wand2, X, Link2, AlertTriangle, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -10,12 +10,37 @@ import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
 
 interface FileUploadProps {
   onProcessingStart: () => void
-  onProgress: (progress: { completed: number; total: number }) => void
+  onProgress: (progress: { completed: number; total: number; progressPercent?: number; jobStatuses?: Array<{ id: string; status: string; progress: number }> }) => void
   onProcessingComplete: (result: { file: Blob; downloadName: string }) => void
+  onGoogleDocsComplete: () => void
   onError: (error: string) => void
 }
 
-export default function FileUpload({ onProcessingStart, onProgress, onProcessingComplete, onError }: FileUploadProps) {
+function authorizeGoogleDocs(docUrl: string): Promise<void> {
+  const authUrl = `/api/auth/google?docUrl=${encodeURIComponent(docUrl)}&mode=export&write=true`
+  const popup = window.open(authUrl, "google-docs-auth", "popup,width=520,height=680")
+  if (!popup) return Promise.reject(new Error("Allow popups to authorize Google Docs, then try again."))
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      window.removeEventListener("message", handleMessage)
+      window.clearInterval(closedTimer)
+    }
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== "gdocs-auth-success") return
+      cleanup()
+      resolve()
+    }
+    const closedTimer = window.setInterval(() => {
+      if (!popup.closed) return
+      cleanup()
+      reject(new Error("Google authorization was not completed."))
+    }, 1000)
+    window.addEventListener("message", handleMessage)
+  })
+}
+
+export default function FileUpload({ onProcessingStart, onProgress, onProcessingComplete, onGoogleDocsComplete, onError }: FileUploadProps) {
   const [file, setFile] = useState<File | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -24,8 +49,24 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
   const [duration, setDuration] = useState("")
   const [estimate, setEstimate] = useState<{ words: number; recommendedPages: number } | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [gdocsUrl, setGdocsUrl] = useState("")
+  const [gdocsUrlError, setGdocsUrlError] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
   const analyzeToken = useRef(0)
+
+  const validateGdocsUrl = useCallback((url: string) => {
+    if (!url.trim()) {
+      setGdocsUrlError("")
+      return true
+    }
+    const pattern = /^https:\/\/docs\.google\.com\/document\/d\/[a-zA-Z0-9-_]+\/?.*$/
+    if (!pattern.test(url)) {
+      setGdocsUrlError("Invalid Google Docs URL. Expected: https://docs.google.com/document/d/DOC_ID/edit")
+      return false
+    }
+    setGdocsUrlError("")
+    return true
+  }, [])
 
   // Reads the transcript's real length so the page target starts at a sensible value
   // instead of an arbitrary default the user has to guess at.
@@ -53,8 +94,9 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
 
   const validateFile = useCallback((candidate?: File) => {
     if (!candidate) return
-    if (!candidate.name.toLowerCase().endsWith(".docx")) {
-      onError("Please choose a Word document in .docx format.")
+    const ext = candidate.name.toLowerCase().slice(candidate.name.lastIndexOf("."))
+    if (![".docx", ".txt"].includes(ext)) {
+      onError("Please choose a Word document in .docx format or a text file in .txt format.")
       return
     }
     if (candidate.size > MAX_UPLOAD_BYTES) {
@@ -63,7 +105,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
     }
     setFile(candidate)
     if (!titleName.trim()) {
-      setTitleName(candidate.name.replace(/\.docx$/i, "").replace(/[_-]+/g, " ").trim())
+      setTitleName(candidate.name.replace(/\.(docx|txt)$/i, "").replace(/[_-]+/g, " ").trim())
     }
     void analyzeFile(candidate)
   }, [onError, analyzeFile, titleName])
@@ -83,6 +125,17 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
 
   const handleUpload = useCallback(async () => {
     if (!file || isProcessing) return
+
+    // Validate Google Docs URL if provided
+    if (gdocsUrl.trim() && !validateGdocsUrl(gdocsUrl)) {
+      return
+    }
+
+    const useGdocs = gdocsUrl.trim().length > 0
+    let googleAuthError: Error | null = null
+    const googleAuthorization = useGdocs
+      ? authorizeGoogleDocs(gdocsUrl).catch((error) => { googleAuthError = error instanceof Error ? error : new Error("Google authorization failed.") })
+      : Promise.resolve()
     setIsProcessing(true)
     onProcessingStart()
     try {
@@ -102,43 +155,87 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
       const resolvedDuration: string = job.duration ?? duration
       const startedAt = Date.now()
       let consecutivePollFailures = 0
-      onProgress({ completed: 0, total: jobs.length })
+      let pollDelay = 750
+      onProgress({ completed: 0, total: jobs.length, progressPercent: 0 })
 
-      while (Date.now() - startedAt < 8 * 60 * 1000) {
-        await new Promise((resolve) => window.setTimeout(resolve, 3500))
+      while (Date.now() - startedAt < 15 * 60 * 1000) {
+        await new Promise((resolve) => window.setTimeout(resolve, pollDelay))
+        pollDelay = 2000
         try {
           const statusResponse = await fetch("/api/status", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ jobs, downloadName, pageCount, titleName: resolvedTitleName, duration: resolvedDuration }),
+            body: JSON.stringify({
+              jobs,
+              downloadName,
+              pageCount,
+              titleName: resolvedTitleName,
+              duration: resolvedDuration,
+              returnNotesHtml: useGdocs
+            }),
             signal: AbortSignal.timeout(30000),
           })
           const contentType = statusResponse.headers.get("Content-Type") || ""
+
+          // Check for binary DOCX response first (in case generation completed)
           if (statusResponse.ok && contentType.includes("application/vnd.openxmlformats")) {
-            const outputFile = await statusResponse.blob()
-            onProgress({ completed: jobs.length, total: jobs.length })
-            onProcessingComplete({ file: outputFile, downloadName })
-            return
+            // Only download direct file if not using Google Docs export
+            if (!useGdocs) {
+              const outputFile = await statusResponse.blob()
+              onProgress({ completed: jobs.length, total: jobs.length, progressPercent: 100 })
+              onProcessingComplete({ file: outputFile, downloadName })
+              return
+            }
+            // If using Google Docs, generation may still be completing;
+            // continue polling loop without trying to parse binary as JSON
+            continue
           }
 
           const status = await statusResponse.json()
           if (!statusResponse.ok) throw new Error(status.error || "A note section failed to generate.")
+
           if (Array.isArray(status.jobs)) jobs = status.jobs
           consecutivePollFailures = 0
-          onProgress({ completed: status.completed || 0, total: status.total || jobs.length })
+          onProgress({
+            completed: status.completed || 0,
+            total: status.total || jobs.length,
+            progressPercent: status.progressPercent,
+            jobStatuses: status.jobStatuses,
+          })
+
+          if (useGdocs && status.status === "completed" && typeof status.notesHtml === "string") {
+            await googleAuthorization
+            if (googleAuthError) throw googleAuthError
+
+            const exportResponse = await fetch("/api/export/gdocs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                docUrl: gdocsUrl,
+                notesHtml: status.notesHtml,
+                title: resolvedTitleName || downloadName.replace(" - Organized Notes.docx", ""),
+                duration: resolvedDuration,
+              }),
+            })
+            const exportResult = await exportResponse.json()
+            if (!exportResponse.ok) throw new Error(exportResult.error || "Failed to write notes to Google Docs.")
+            onProgress({ completed: jobs.length, total: jobs.length, progressPercent: 100 })
+            onGoogleDocsComplete()
+            return
+          }
         } catch (pollError) {
           consecutivePollFailures += 1
           if (consecutivePollFailures >= 3) throw pollError
         }
       }
 
-      throw new Error("Generation took longer than 8 minutes. Please try again with fewer pages or a shorter transcript.")
+      throw new Error("Generation took longer than 15 minutes. Please try again with fewer pages or a shorter transcript.")
     } catch (error) {
       onError(error instanceof Error ? error.message : "An unexpected error occurred.")
     } finally {
       setIsProcessing(false)
     }
-  }, [file, isProcessing, onProcessingStart, onProgress, onProcessingComplete, onError, pages, titleName, duration])
+  }, [file, isProcessing, onProcessingStart, onProgress, onProcessingComplete, onGoogleDocsComplete, onError, pages, titleName, duration, gdocsUrl, validateGdocsUrl])
 
   return (
     <Card className="overflow-hidden border-border/70 bg-card/95 shadow-xl shadow-primary/5 backdrop-blur">
@@ -166,7 +263,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
             file && "border-primary/40 bg-primary/[0.035]"
           )}
         >
-          <input ref={inputRef} type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" onChange={(event) => validateFile(event.target.files?.[0])} />
+          <input ref={inputRef} type="file" accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(event) => validateFile(event.target.files?.[0])} />
           {file ? (
             <>
               <button
@@ -198,7 +295,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
               <div className="mb-4 flex size-14 items-center justify-center rounded-2xl border bg-background text-muted-foreground shadow-sm transition-transform group-hover:-translate-y-0.5"><Upload className="size-6" /></div>
               <p className="text-sm font-semibold">Drop your transcript here</p>
               <p className="mt-1 text-sm text-muted-foreground">or click to browse your files</p>
-              <p className="mt-4 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">DOCX · up to {MAX_UPLOAD_LABEL}</p>
+              <p className="mt-4 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">DOCX, TXT · up to {MAX_UPLOAD_LABEL}</p>
             </>
           )}
         </div>
@@ -213,7 +310,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
               ? "Reading your transcript to recommend a page count…"
               : estimate
                 ? `Recommended ${estimate.recommendedPages} ${estimate.recommendedPages === 1 ? "page" : "pages"} based on this transcript. Adjust if you want more or less detail.`
-                : "Upload a transcript for a recommendation, or set a page target from 1 to 25."}
+                : "Upload a transcript for a recommendation, or set a page target from 1 to 80."}
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative w-40">
@@ -221,13 +318,13 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
                 id="page-count"
                 type="number"
                 min={1}
-                max={25}
+                max={80}
                 step={1}
                 inputMode="numeric"
                 value={pages}
                 onChange={(event) => {
                   const value = event.target.valueAsNumber
-                  if (!Number.isNaN(value)) setPages(Math.min(25, Math.max(1, Math.round(value))))
+                  if (!Number.isNaN(value)) setPages(Math.min(80, Math.max(1, Math.round(value))))
                 }}
                 className="h-12 rounded-xl pr-16 text-base font-semibold tabular-nums"
                 aria-label="Target number of pages"
@@ -291,14 +388,60 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
           </div>
         </div>
 
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+            <span className="flex size-5 items-center justify-center rounded-md bg-primary/10">4</span>
+            Google Docs (Optional)
+          </div>
+          <p className="mb-3 text-sm text-muted-foreground">
+            Provide a Google Docs link to write the generated notes directly into that document instead of downloading.
+            The document must be editable by your Google account. Existing content will be replaced.
+          </p>
+          <div className="relative">
+            <Link2 className="absolute left-4 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <Input
+              id="gdocs-url"
+              type="url"
+              placeholder="https://docs.google.com/document/d/your-doc-id/edit"
+              value={gdocsUrl}
+              onChange={(e) => { setGdocsUrl(e.target.value); validateGdocsUrl(e.target.value); }}
+              onBlur={(e) => validateGdocsUrl(e.target.value)}
+              className={cn(
+                "h-12 rounded-xl pl-12 pr-4 text-sm",
+                gdocsUrlError && "border-destructive focus-visible:ring-destructive"
+              )}
+              aria-label="Google Docs URL"
+              disabled={isProcessing || isAnalyzing}
+            />
+          </div>
+          {gdocsUrlError && (
+            <p className="mt-1.5 text-sm text-destructive flex items-center gap-1.5">
+              <AlertTriangle className="size-3.5" />
+              {gdocsUrlError}
+            </p>
+          )}
+          {gdocsUrl && !gdocsUrlError && (
+            <p className="mt-1.5 text-sm text-emerald-600 flex items-center gap-1.5">
+              <CheckCircle2 className="size-3.5" />
+              Valid Google Docs URL — notes will be written here
+            </p>
+          )}
+        </div>
+
         <Button size="lg" onClick={handleUpload} disabled={!file || isProcessing || isAnalyzing} className="h-12 w-full rounded-xl text-sm shadow-md shadow-primary/15">
           {isProcessing
             ? <><Loader2 className="animate-spin" />Creating your notes</>
             : isAnalyzing
               ? <><Loader2 className="animate-spin" />Analyzing transcript</>
-              : <><Sparkles />Generate smart notes</>}
+              : gdocsUrl && !gdocsUrlError
+                ? <><Sparkles />Generate & Write to Google Docs</>
+                : <><Sparkles />Generate smart notes</>}
         </Button>
-        <p className="text-center text-xs text-muted-foreground">Your document is used only to create your notes.</p>
+        <p className="text-center text-xs text-muted-foreground">
+          {gdocsUrl && !gdocsUrlError
+            ? "Notes will be written to your Google Doc after generation (requires Google sign-in)."
+            : "Your document is used only to create your notes."}
+        </p>
       </CardContent>
     </Card>
   )

@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
-import { parseDocx } from "@/lib/docx-parser"
+import { parseFile } from "@/lib/docx-parser"
 import { estimateTranscript } from "@/lib/ai-service"
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
+
+const SUPPORTED_EXTENSIONS = [".docx", ".txt"]
 
 export const maxDuration = 30
 // mammoth needs Node's Buffer, so this route cannot run on the edge runtime.
 export const runtime = "nodejs"
+
+function getFileExtension(fileName: string): string {
+  const lastDot = fileName.lastIndexOf(".")
+  return lastDot === -1 ? "" : fileName.slice(lastDot).toLowerCase()
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,15 +23,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No file provided." }, { status: 400 })
     }
 
-    if (!file.name.toLowerCase().endsWith(".docx")) {
-      return NextResponse.json({ error: "Only .docx files are supported." }, { status: 400 })
+    const fileExt = getFileExtension(file.name)
+    if (!SUPPORTED_EXTENSIONS.includes(fileExt)) {
+      return NextResponse.json({ error: "Only .docx and .txt files are supported." }, { status: 400 })
     }
 
     if (file.size > MAX_UPLOAD_BYTES) {
       return NextResponse.json({ error: `The file is larger than the ${MAX_UPLOAD_LABEL} limit.` }, { status: 400 })
     }
 
-    const transcript = await parseDocx(await file.arrayBuffer())
+    const transcript = await parseFile(await file.arrayBuffer(), file.name)
 
     if (!transcript.trim()) {
       return NextResponse.json({ error: "Could not extract text from the document." }, { status: 400 })

@@ -7,7 +7,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 
-type AppState = "upload" | "processing" | "error"
+type AppState = "upload" | "processing" | "error" | "result"
+
+type GenerationProgress = {
+  completed: number
+  total: number
+  progressPercent?: number
+  jobStatuses?: Array<{ id: string; status: string; progress: number }>
+}
 
 const benefits = [
   { icon: BrainCircuit, title: "Finds the signal", copy: "Pulls out concepts, definitions, examples, and exam cues." },
@@ -19,7 +26,8 @@ export default function Home() {
   const [state, setState] = useState<AppState>("upload")
   const [errorMessage, setErrorMessage] = useState("")
   const [downloadedName, setDownloadedName] = useState("")
-  const [generationProgress, setGenerationProgress] = useState({ completed: 0, total: 1 })
+  const [googleDocsComplete, setGoogleDocsComplete] = useState(false)
+  const [generationProgress, setGenerationProgress] = useState<GenerationProgress>({ completed: 0, total: 1 })
 
   const handleDownload = ({ file, downloadName }: { file: Blob; downloadName: string }) => {
     const url = URL.createObjectURL(file)
@@ -31,7 +39,7 @@ export default function Home() {
     link.remove()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     setDownloadedName(downloadName)
-    setState("upload")
+    setState("result")
     setErrorMessage("")
   }
 
@@ -50,7 +58,7 @@ export default function Home() {
           </div>
           <div className="hidden items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex">
             <span className="size-1.5 rounded-full bg-emerald-500" />
-            DOCX files supported
+            DOCX, TXT · Google Docs export
           </div>
         </div>
       </header>
@@ -84,17 +92,26 @@ export default function Home() {
         </section>
 
         <section className="min-w-0">
-          {state === "upload" && downloadedName && (
+          {(state === "upload" || state === "result") && downloadedName && (
             <Alert className="mb-4 border-emerald-500/30 bg-emerald-500/5 text-emerald-800">
               <CheckCircle2 className="size-4 text-emerald-600" />
               <AlertDescription>Your download for {downloadedName} has started.</AlertDescription>
             </Alert>
           )}
-          {state === "upload" && (
+
+          {(state === "upload" || state === "result") && googleDocsComplete && (
+            <Alert className="mb-4 border-emerald-500/30 bg-emerald-500/5 text-emerald-800">
+              <CheckCircle2 className="size-4 text-emerald-600" />
+              <AlertDescription>The generated notes were written to your Google Doc.</AlertDescription>
+            </Alert>
+          )}
+
+          {(state === "upload" || state === "result") && (
             <FileUpload
-              onProcessingStart={() => { setDownloadedName(""); setErrorMessage(""); setGenerationProgress({ completed: 0, total: 1 }); setState("processing") }}
+              onProcessingStart={() => { setDownloadedName(""); setGoogleDocsComplete(false); setErrorMessage(""); setGenerationProgress({ completed: 0, total: 1 }); setState("processing") }}
               onProgress={setGenerationProgress}
               onProcessingComplete={handleDownload}
+              onGoogleDocsComplete={() => { setGoogleDocsComplete(true); setErrorMessage(""); setState("result") }}
               onError={(error) => { setErrorMessage(error); setState("error") }}
             />
           )}
@@ -109,14 +126,29 @@ export default function Home() {
                 </div>
                 <h2 className="text-xl font-semibold tracking-tight">Building your study guide</h2>
                 <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-                  Generating topic section {Math.min(generationProgress.completed + 1, generationProgress.total)} of {generationProgress.total}.
+                  {generationProgress.jobStatuses && generationProgress.jobStatuses.length > 0
+                    ? `Processing ${generationProgress.jobStatuses.filter(j => j.status === "completed").length} of ${generationProgress.jobStatuses.length} sections`
+                    : `Generating topic section ${Math.min(generationProgress.completed + 1, generationProgress.total)} of ${generationProgress.total}.`}
                 </p>
                 <div className="mt-8 w-full max-w-xs space-y-2">
-                  <Progress value={(generationProgress.completed / generationProgress.total) * 100} />
+                  <Progress value={generationProgress.progressPercent ?? (generationProgress.completed / generationProgress.total) * 100} />
                   <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>{generationProgress.completed} of {generationProgress.total} sections complete</span>
-                    <span>{Math.round((generationProgress.completed / generationProgress.total) * 100)}%</span>
+                    <span>{generationProgress.jobStatuses && generationProgress.jobStatuses.length > 0
+                      ? `${generationProgress.jobStatuses.filter(j => j.status === "completed").length} of ${generationProgress.jobStatuses.length} sections complete`
+                      : `${generationProgress.completed} of ${generationProgress.total} sections complete`}
+                    </span>
+                    <span>{generationProgress.progressPercent ?? Math.round((generationProgress.completed / generationProgress.total) * 100)}%</span>
                   </div>
+                  {generationProgress.jobStatuses && generationProgress.jobStatuses.length > 0 && (
+                    <div className="mt-2 text-[10px] text-muted-foreground font-mono">
+                      {generationProgress.jobStatuses.map((job, idx) => (
+                        <div key={job.id} className="flex justify-between gap-2">
+                          <span>Section {idx + 1}</span>
+                          <span className="text-primary">{job.progress}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -129,6 +161,7 @@ export default function Home() {
                 onProcessingStart={() => { setErrorMessage(""); setState("processing") }}
                 onProgress={setGenerationProgress}
                 onProcessingComplete={handleDownload}
+                onGoogleDocsComplete={() => { setGoogleDocsComplete(true); setErrorMessage(""); setState("result") }}
                 onError={(error) => setErrorMessage(error)}
               />
             </div>
