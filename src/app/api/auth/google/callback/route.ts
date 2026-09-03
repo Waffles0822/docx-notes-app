@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { encryptGoogleTokens, getTokensFromCode } from "@/lib/google-docs"
 import { cookies } from "next/headers"
 
+const GOOGLE_SESSION_SECONDS = 60 * 60 * 24 * 30
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const code = searchParams.get("code")
@@ -32,8 +34,8 @@ export async function GET(request: NextRequest) {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
-        maxAge: 600,
-        path: "/api/export/gdocs",
+        maxAge: GOOGLE_SESSION_SECONDS,
+        path: "/api",
       })
       const origin = JSON.stringify(request.nextUrl.origin)
       return new NextResponse(

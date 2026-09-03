@@ -77,6 +77,18 @@ export async function refreshAccessToken(refreshToken: string): Promise<GoogleTo
   return credentials as GoogleTokens
 }
 
+export async function ensureFreshGoogleTokens(tokens: GoogleTokens): Promise<GoogleTokens> {
+  if (!tokens.expiry_date || tokens.expiry_date > Date.now() + 60_000) return tokens
+  if (!tokens.refresh_token) throw new Error("Google authorization has expired.")
+
+  const refreshed = await refreshAccessToken(tokens.refresh_token)
+  return {
+    ...tokens,
+    ...refreshed,
+    refresh_token: refreshed.refresh_token || tokens.refresh_token,
+  }
+}
+
 function extractDocId(url: string): string | null {
   const match = url.match(/\/document\/d\/([a-zA-Z0-9-_]+)/)
   return match ? match[1] : null
