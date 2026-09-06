@@ -55,14 +55,6 @@ When a mathematical expression requires a subscript or superscript, use the appr
 
 Use Unicode characters whenever a suitable subscript or superscript character exists. Do not use LaTeX commands for subscripts or superscripts.
 
-Examples:
-
-Write x<sup>2</sup> + y<sup>2</sup> = z<sup>2</sup> instead of <math>x^2 + y^2 = z^2</math>
-Write a/b instead of <math>\frac{a}{b}</math>
-Write √13 or sqrt(13) instead of <math>\sqrt{13}</math>
-Write 2π - arctan(3/2) instead of <math>2\pi - \arctan(3/2)</math>
-Write x<sub>1</sub> + x<sub>2</sub> = x<sub>3</sub instead of <math>x_1 + x_2 = x_3</math>
-
 For more complex expressions where Unicode cannot adequately represent the mathematical structure, continue to use clear plain-text notation rather than automatically switching to LaTeX.
 
 Do not use colons anywhere in the notes.
