@@ -45,8 +45,25 @@ Keep every bullet short and to the point. Write it in the fewest words that stil
 
 Do not include routine classroom filler or administrative commentary unless it contains a specific instruction, deadline, concept, or assessment detail. Examples of text to omit include the instructor will answer questions during class, we will talk about this later, let us continue, and similar vague bridging lines.
 
-FORMULAS AND MATHEMATICAL EXPRESSIONS
-Wrap every formula, equation, or mathematical expression in <math> tags and write the contents as LaTeX, for example <math>2\\pi - \\arctan(3/2)</math> or <math>\\left(\\sqrt{13}, 2\\pi - \\arctan(3/2)\\right)</math>. This applies to inline expressions inside a sentence as well as standalone equations. Use LaTeX commands for structure and symbols, including \\frac for fractions, \\sqrt for roots, ^ for exponents, _ for subscripts, and named commands such as \\pi, \\theta, \\arctan, \\int, and \\sum. Never write raw \\( \\), \\[ \\], or dollar-sign delimiters, and never leave LaTeX commands outside a <math> tag. Ordinary prose, including plain numbers, percentages, dates, and counts, must stay outside <math> tags.
+MATHEMATICAL EXPRESSIONS
+
+Do not automatically wrap mathematical expressions, formulas, or equations in <math> tags or convert them to LaTeX.
+
+Write mathematical expressions in plain text by default, using normal keyboard characters and Unicode mathematical symbols.
+
+When a mathematical expression requires a subscript or superscript, use the appropriate Unicode subscript or superscript characters rather than _ or ^ notation.
+
+Use Unicode characters whenever a suitable subscript or superscript character exists. Do not use LaTeX commands for subscripts or superscripts.
+
+Examples:
+
+Write x<sup>2</sup> + y<sup>2</sup> = z<sup>2</sup> instead of <math>x^2 + y^2 = z^2</math>
+Write a/b instead of <math>\frac{a}{b}</math>
+Write √13 or sqrt(13) instead of <math>\sqrt{13}</math>
+Write 2π - arctan(3/2) instead of <math>2\pi - \arctan(3/2)</math>
+Write x<sub>1</sub> + x<sub>2</sub> = x<sub>3</sub instead of <math>x_1 + x_2 = x_3</math>
+
+For more complex expressions where Unicode cannot adequately represent the mathematical structure, continue to use clear plain-text notation rather than automatically switching to LaTeX.
 
 Do not use colons anywhere in the notes.
 
