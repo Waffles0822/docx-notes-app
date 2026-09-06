@@ -5,7 +5,7 @@ import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
 
 const SUPPORTED_EXTENSIONS = [".docx", ".txt"]
 
-export const maxDuration = 30
+export const maxDuration = 60
 // mammoth needs Node's Buffer, so this route cannot run on the edge runtime.
 export const runtime = "nodejs"
 
