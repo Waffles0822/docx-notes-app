@@ -17,6 +17,10 @@ ALL REMINDERS MUST BE FLAT BULLETS DIRECTLY UNDER THE REMINDERS SUB-HEADER — N
 SUB-HEADERS
 Within each group, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Housekeeping and Course Adjustments, Clean Air Act, Pollution Management). Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
 
+Avoid repeating the same sentence openings by stripping away the repeated openings and converting them into a hierarchical bulleted list.
+
+Avoid turning every small topic into a separate heading. If the subsequent notes pertain to the main title, keep them under the main title without creating additional headings. Create a separate heading only when the content introduces a distinct topic that is separate from the main title.
+
 BULLETS AND NESTING
 Build a deep, richly nested outline rather than a flat list. Whenever a point carries its own supporting context, description, elaboration, condition, example, breakdown, enumeration, criterion, step, figure, or consequence, place that material in bullets nested underneath it instead of as a sibling beside it. Every level of nesting must sit under the specific bullet it explains. Prefer three to four levels of depth wherever the transcript supports it, and use the deepest level for the most granular detail such as individual figures, named items, list members, or single-clause qualifiers. Only leave a bullet unnested when the transcript truly gives no supporting detail for it.
 
