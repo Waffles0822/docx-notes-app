@@ -140,19 +140,21 @@ function extractGroupSection(html: string, cls: "announcements" | "lecture"): Su
   return match ? extractSubsections(match[1]) : []
 }
 
-// Reminders (quizzes, exams, deadlines) always lead the notes. Chunked transcripts are
-// merged section by section, so the model can emit a Reminders sub-header per chunk and
-// not necessarily first; this folds them into one and moves it to the front.
+// Normalize older output and chunked responses to one reminder heading.
+// Other announcement headings become parent bullets, preserving their details.
 function hoistReminders(subs: SubSection[]): SubSection[] {
-  const isReminders = (sub: SubSection) => /^reminders?$/i.test(sub.heading.trim())
-  const reminders = subs.filter(isReminders)
-  if (!reminders.length) return subs
-
-  const merged: SubSection = {
-    heading: "Reminders",
-    bullets: reminders.flatMap((sub) => sub.bullets),
-  }
-  return [merged, ...subs.filter((sub) => !isReminders(sub))]
+  if (!subs.length) return []
+  const isReminder = (sub: SubSection) => /^reminders?$/i.test(sub.heading.trim())
+  return [{
+    heading: "Reminder",
+    bullets: [
+      ...subs.filter(isReminder).flatMap((sub) => sub.bullets),
+      ...subs.filter((sub) => !isReminder(sub)).map((sub) => ({
+        text: sub.heading,
+        children: sub.bullets,
+      })),
+    ],
+  }]
 }
 
 export function parseNotes(html: string): { announcements: SubSection[]; lecture: SubSection[] } {
@@ -162,10 +164,10 @@ export function parseNotes(html: string): { announcements: SubSection[]; lecture
   }
 }
 
-// Shaded circle bullets for all levels (fisheye ◉, hollow circle ○, filled square ■, repeat).
+// Solid circle bullets at every nesting level.
 // Each level indents by 0.25" with a hanging indent so wrapped lines align under the text.
 function buildBulletLevels() {
-  const glyphs = ["◉", "○", "■", "◉"]
+  const glyphs = Array.from({ length: MAX_BULLET_LEVEL + 1 }, () => "●")
   return glyphs.map((text, level) => ({
     level,
     format: LevelFormat.BULLET,
@@ -207,12 +209,12 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
     }),
   ]
 
-  function renderBullets(bullets: Bullet[], level: number) {
+  function renderBullets(bullets: Bullet[], level: number, boldParents: boolean) {
     for (const bullet of bullets) {
       // A first-level bullet carrying nested bullets is written as a Title Case heading
       // rather than a sentence, so it is bolded to show that role on the page. A
       // first-level bullet with no children is an ordinary sentence and stays plain.
-      const isHeading = level === 0 && bullet.children.length > 0
+      const isHeading = boldParents && level === 0 && bullet.children.length > 0
       children.push(new Paragraph({
         numbering: { reference: BULLET_REFERENCE, level },
         // keepNext holds a parent bullet with the children that explain it, so a nested
@@ -221,7 +223,7 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
         spacing: { after: 20, line: 259 },
         children: buildRichRuns(bullet.text, { font: FONT, size: BODY_SIZE, bold: isHeading }),
       }))
-      if (bullet.children.length) renderBullets(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL))
+      if (bullet.children.length) renderBullets(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL), boldParents)
     }
   }
 
@@ -239,7 +241,7 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
         spacing: { before: subIndex === 0 ? 20 : 140, after: 40, line: 240 },
         children: buildRichRuns(sub.heading, { font: FONT, size: BODY_SIZE, bold: true }),
       }))
-      renderBullets(sub.bullets, 0)
+      renderBullets(sub.bullets, 0, label !== "ANNOUNCEMENTS")
     })
   }
 

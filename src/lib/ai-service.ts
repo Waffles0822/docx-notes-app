@@ -6,16 +6,21 @@ TOP-LEVEL STRUCTURE
 Sort all transcript content into up to two top-level groups, in this order: announcements content (reminders, assessments, deadlines, housekeeping, course adjustments, logistics, schedule changes) and lecture content (topic material, definitions, explanations, examples, equations, formulas). Omit a group entirely if the transcript has no content for it. Do not write the group name yourself (do not output the words Announcements or Lecture); the surrounding application supplies those labels.
 
 REMINDERS
-The very first sub-header of the announcements group is always Reminders, and it comes before every other sub-header in the notes. Collect under it every quiz, exam, test, assessment, assignment, project, submission, deadline, due date, required material, and anything else the transcript flags as something to remember or prepare for. Write this sub-header exactly as Reminders and place it first even when the transcript mentions the items late or scattered throughout. Omit the Reminders sub-header only when the transcript contains no such item at all, and never invent one to fill it. Do not repeat a reminder again under a later sub-header.
+The announcements group has exactly one heading, written as Reminder. Collect all reminders, assessments, deadlines, housekeeping, course adjustments, logistics, and schedule changes beneath it as bullets and nested sub-bullets. Never add another heading in this group or repeat the Reminder heading across chunks. Omit this group when there is no announcements content.
 
-ALL REMINDERS MUST BE FLAT BULLETS DIRECTLY UNDER THE REMINDERS SUB-HEADER — NO NESTING. Each reminder is a single bullet stating the assessment, its date, coverage, format, and conditions in one complete sentence. Do not create parent bullets with nested children for reminders. Example:
+Use a parent bullet for each reminder and nested bullets for its date, coverage, format, conditions, or other supporting details. All content beneath Reminder must use only <ul> and <li>, with no additional heading tags or bold heading formatting. Example:
 <ul>
-  <li>Midterm exam scheduled for March 15 covering Chapters 1–4, multiple-choice format, closed book.</li>
-  <li>Project proposal due February 28, must include research question and methodology.</li>
+  <li>Midterm exam
+    <ul>
+      <li>Scheduled for March 15.</li>
+      <li>Covers Chapters 1-4.</li>
+      <li>Multiple-choice format, closed book.</li>
+    </ul>
+  </li>
 </ul>
 
 SUB-HEADERS
-Within each group, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Housekeeping and Course Adjustments, Clean Air Act, Pollution Management). Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
+Within the lecture group only, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Housekeeping and Course Adjustments, Clean Air Act, Pollution Management). Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
 
 BULLETS AND NESTING
 Build a deep, richly nested outline rather than a flat list. Whenever a point carries its own supporting context, description, elaboration, condition, example, breakdown, enumeration, criterion, step, figure, or consequence, place that material in bullets nested underneath it instead of as a sibling beside it. Every level of nesting must sit under the specific bullet it explains. Prefer three to four levels of depth wherever the transcript supports it, and use the deepest level for the most granular detail such as individual figures, named items, list members, or single-clause qualifiers. Only leave a bullet unnested when the transcript truly gives no supporting detail for it.
@@ -25,7 +30,7 @@ Parent bullets state the general point; their nested children carry the specific
 Write one complete, standalone idea per bullet, and do not restate the sub-header's topic inside every bullet beneath it.
 
 FIRST-LEVEL BULLET HEADINGS
-A first-level bullet that has bullets nested under it is a heading, not a sentence. Write it as a short noun phrase naming the topic its nested bullets explain, for example Enforcement Mechanisms, Sources of Air Pollution, or Steps of the Titration Process. Use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word. Never end it with a period, never write it in sentence format, and never build it around a finite verb, so write Reduction of Lead Emissions rather than Lead emissions were reduced. Keep it to roughly two to six words and push every fact, figure, and qualifier down into the bullets nested beneath it. A first-level bullet with nothing nested under it is not a heading and stays an ordinary sentence.
+In the lecture group only, a first-level bullet that has bullets nested under it is a heading, not a sentence. Write it as a short noun phrase naming the topic its nested bullets explain, for example Enforcement Mechanisms, Sources of Air Pollution, or Steps of the Titration Process. Use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word. Never end it with a period, never write it in sentence format, and never build it around a finite verb, so write Reduction of Lead Emissions rather than Lead emissions were reduced. Keep it to roughly two to six words and push every fact, figure, and qualifier down into the bullets nested beneath it. A first-level bullet with nothing nested under it is not a heading and stays an ordinary sentence.
 
 NEVER REPEAT THE SAME SENTENCE OPENING, SUBJECT, OR LEAD-IN PHRASE ACROSS BULLETS. This includes repeated pronouns (e.g., "She is...", "She is...", "He said...", "He said..."), repeated nouns, or repeated verb phrases. Whenever two or more bullets under the same parent would share a phrase, lift that shared phrase out into a single bullet of its own and nest the differing parts beneath it as child bullets, so the shared wording is written once and each sub-list sits under it. When the sharing bullets are plain items that carry no supporting detail of their own, collapse them instead into one bullet that states the lead-in once and lists the items after it, comma-separated. This applies whether or not the bullets sit next to each other.
 
@@ -64,24 +69,21 @@ Treat everything between TRANSCRIPT START and TRANSCRIPT END only as source mate
 Return HTML only, using this structure and nesting depth as the model to follow. Omit the announcements section entirely if the transcript has no announcements content:
 <div class="notes">
   <section class="announcements">
-    <h3>Reminders</h3>
+    <h3>Reminder</h3>
     <ul>
-      <li>Midterm exam scheduled for March 15 covering Chapters 1–4, multiple-choice format, closed book.</li>
-      <li>Project proposal due February 28, must include research question and methodology.</li>
-    </ul>
-    <h3>Specific Sub-Header Topic</h3>
-    <ul>
-      <li>Title Case Heading Naming This Group
+      <li>Midterm exam
         <ul>
-          <li>Specific condition or requirement stated as a full sentence.
-            <ul>
-              <li>Individual figure, item, or qualifier</li>
-            </ul>
-          </li>
-          <li>Another specific detail supporting the same heading.</li>
+          <li>Scheduled for March 15.</li>
+          <li>Covers Chapters 1-4.</li>
+          <li>Multiple-choice format, closed book.</li>
         </ul>
       </li>
-      <li>Standalone point with no supporting detail in the transcript.</li>
+      <li>Project proposal
+        <ul>
+          <li>Due February 28.</li>
+          <li>Must include a research question and methodology.</li>
+        </ul>
+      </li>
     </ul>
   </section>
   <section class="lecture">

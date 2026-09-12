@@ -164,15 +164,15 @@ type IndexedParagraph = GoogleDocParagraph & {
 
 const pt = (magnitude: number): docs_v1.Schema$Dimension => ({ magnitude, unit: "PT" })
 
-function flattenBullets(bullets: Bullet[], level = 0): GoogleDocParagraph[] {
+function flattenBullets(bullets: Bullet[], level = 0, boldParents = true): GoogleDocParagraph[] {
   return bullets.flatMap((bullet) => [
     {
       text: normalizeMathInProse(bullet.text),
       kind: "bullet" as const,
       level,
-      bold: level === 0 && bullet.children.length > 0,
+      bold: boldParents && level === 0 && bullet.children.length > 0,
     },
-    ...flattenBullets(bullet.children, Math.min(level + 1, 3)),
+    ...flattenBullets(bullet.children, Math.min(level + 1, 3), boldParents),
   ])
 }
 
@@ -182,7 +182,7 @@ function buildGroup(label: string, sections: SubSection[]): GoogleDocParagraph[]
     { text: label, kind: "group" },
     ...sections.flatMap((section) => [
       { text: normalizeMathInProse(section.heading), kind: "subheading" as const },
-      ...flattenBullets(section.bullets),
+      ...flattenBullets(section.bullets, 0, label !== "ANNOUNCEMENTS"),
     ]),
   ]
 }
@@ -204,12 +204,12 @@ function buildDocRequests(notesHtml: string, title: string, duration: string, en
   const indexed: IndexedParagraph[] = []
   let index = 1
   const textContent = paragraphs.map((paragraph) => {
-    const tabs = paragraph.kind === "bullet" ? "\t".repeat(paragraph.level || 0) : ""
-    const line = `${tabs}${paragraph.text}\n`
+    // Apply indentation after creating disc bullets so every level keeps a solid circle.
+    const line = `${paragraph.text}\n`
     indexed.push({
       ...paragraph,
       startIndex: index,
-      textStartIndex: index + tabs.length,
+      textStartIndex: index,
       endIndex: index + line.length,
     })
     index += line.length
@@ -312,13 +312,25 @@ function buildDocRequests(notesHtml: string, title: string, duration: string, en
     return ranges
   }, [])
 
-  // Creating nested bullets removes their leading tabs and shifts later indexes, so apply
-  // each contiguous list from the end of the document toward the beginning.
+  // Create disc bullets without leading tabs, then indent each paragraph visually.
+  // The Docs API presets otherwise alternate glyphs at nested levels.
   for (const range of bulletRanges.reverse()) {
     requests.push({
       createParagraphBullets: {
         range,
         bulletPreset: "BULLET_DISC_CIRCLE_SQUARE",
+      },
+    })
+  }
+
+  for (const paragraph of indexed) {
+    if (paragraph.kind !== "bullet") continue
+    const indent = 18 + (paragraph.level || 0) * 18
+    requests.push({
+      updateParagraphStyle: {
+        range: { startIndex: paragraph.startIndex, endIndex: paragraph.endIndex },
+        paragraphStyle: { indentStart: pt(indent), indentEnd: pt(0), indentFirstLine: pt(indent - 13) },
+        fields: "indentStart,indentEnd,indentFirstLine",
       },
     })
   }
