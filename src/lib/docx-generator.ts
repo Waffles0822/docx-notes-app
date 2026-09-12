@@ -140,24 +140,16 @@ function extractGroupSection(html: string, cls: "announcements" | "lecture"): Su
   return match ? extractSubsections(match[1]) : []
 }
 
-// Reminders (quizzes, exams, deadlines) always lead the notes. Chunked transcripts are
-// merged section by section, so the model can emit a Reminders sub-header per chunk and
-// not necessarily first; this folds them into one and moves it to the front.
-function hoistReminders(subs: SubSection[]): SubSection[] {
-  const isReminders = (sub: SubSection) => /^reminders?$/i.test(sub.heading.trim())
-  const reminders = subs.filter(isReminders)
-  if (!reminders.length) return subs
-
-  const merged: SubSection = {
-    heading: "Reminders",
-    bullets: reminders.flatMap((sub) => sub.bullets),
-  }
-  return [merged, ...subs.filter((sub) => !isReminders(sub))]
+// Announcement rendering has one invariant: Reminder is its only sub-heading. Merge
+// every model-produced announcement subsection beneath it as a final safety net.
+function normalizeAnnouncements(subs: SubSection[]): SubSection[] {
+  if (!subs.length) return []
+  return [{ heading: "Reminder", bullets: subs.flatMap((sub) => sub.bullets) }]
 }
 
 export function parseNotes(html: string): { announcements: SubSection[]; lecture: SubSection[] } {
   return {
-    announcements: hoistReminders(extractGroupSection(html, "announcements")),
+    announcements: normalizeAnnouncements(extractGroupSection(html, "announcements")),
     lecture: extractGroupSection(html, "lecture"),
   }
 }
@@ -185,17 +177,25 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
 
   const children: Paragraph[] = [
     new Paragraph({
+      alignment: AlignmentType.LEFT,
+      bidirectional: false,
       spacing: { after: 40, line: 240 },
       children: [new TextRun({ text: `Title Name : ${normalizeMathInProse(titleName)}`, size: BODY_SIZE, font: FONT })],
     }),
     new Paragraph({
+      alignment: AlignmentType.LEFT,
+      bidirectional: false,
       spacing: { after: 40, line: 240 },
       children: [new TextRun({ text: `Duration: ${duration}`, size: BODY_SIZE, font: FONT })],
     }),
     new Paragraph({
+      alignment: AlignmentType.LEFT,
+      bidirectional: false,
       spacing: { after: 160, line: 240 },
       border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "AAAAAA", space: 6 } },
       children: [
+        // Keep feedback content as an ordinary text run. It remains selectable and
+        // copy-pastable in Word; no drawing, image, field, or inaccessible object is used.
         new TextRun({
           text: "Click here to provide feedback",
           size: BODY_SIZE,
@@ -209,17 +209,17 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
 
   function renderBullets(bullets: Bullet[], level: number) {
     for (const bullet of bullets) {
-      // A first-level bullet carrying nested bullets is written as a Title Case heading
-      // rather than a sentence, so it is bolded to show that role on the page. A
-      // first-level bullet with no children is an ordinary sentence and stays plain.
-      const isHeading = level === 0 && bullet.children.length > 0
       children.push(new Paragraph({
+        alignment: AlignmentType.LEFT,
+        bidirectional: false,
         numbering: { reference: BULLET_REFERENCE, level },
         // keepNext holds a parent bullet with the children that explain it, so a nested
         // group never splits away from the point it belongs to.
         keepNext: bullet.children.length > 0,
         spacing: { after: 20, line: 259 },
-        children: buildRichRuns(bullet.text, { font: FONT, size: BODY_SIZE, bold: isHeading }),
+        // Every bullet remains plain text, including a parent with nested children.
+        // Bold is reserved exclusively for the group and subsection headers below.
+        children: buildRichRuns(bullet.text, { font: FONT, size: BODY_SIZE, bold: false }),
       }))
       if (bullet.children.length) renderBullets(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL))
     }
@@ -228,6 +228,8 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
   function renderGroup(label: string, subs: SubSection[], isFirstGroup: boolean) {
     if (!subs.length) return
     children.push(new Paragraph({
+      alignment: AlignmentType.LEFT,
+      bidirectional: false,
       keepNext: true,
       spacing: { before: isFirstGroup ? 0 : 200, after: 60, line: 240 },
       children: [new TextRun({ text: label, bold: true, underline: {}, size: GROUP_HEADING_SIZE, font: FONT })],
@@ -235,6 +237,8 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
 
     subs.forEach((sub, subIndex) => {
       children.push(new Paragraph({
+        alignment: AlignmentType.LEFT,
+        bidirectional: false,
         keepNext: true,
         spacing: { before: subIndex === 0 ? 20 : 140, after: 40, line: 240 },
         children: buildRichRuns(sub.heading, { font: FONT, size: BODY_SIZE, bold: true }),
@@ -243,7 +247,7 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
     })
   }
 
-  renderGroup("ANNOUNCEMENTS", announcements, true)
+  renderGroup("ANNOUNCEMENT", announcements, true)
   renderGroup("LECTURE", lecture, announcements.length === 0)
 
   const document = new Document({
@@ -257,7 +261,7 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
       default: {
         document: {
           run: { font: FONT, size: BODY_SIZE },
-          paragraph: { spacing: { line: 259, after: 20 } },
+          paragraph: { alignment: AlignmentType.LEFT, spacing: { line: 259, after: 20 } },
         },
       },
     },

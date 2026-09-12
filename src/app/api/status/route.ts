@@ -29,11 +29,25 @@ export async function POST(request: NextRequest) {
       ? body.jobs.filter((job: unknown): job is BackgroundNoteJob => {
           if (!job || typeof job !== "object") return false
           const candidate = job as Partial<BackgroundNoteJob>
+          const context = candidate.context
+          const validContext = context === undefined || (
+            Number.isInteger(context.part) && context.part >= 1 && context.part <= 80
+            && Number.isInteger(context.total) && context.total >= context.part && context.total <= 80
+            && (context.strategy === "full-document" || context.strategy === "document-memory")
+            && Number.isInteger(context.documentChars) && context.documentChars > 0
+            && Number.isInteger(context.focusChars) && context.focusChars > 0
+            && Number.isInteger(context.globalContextChars) && context.globalContextChars >= 0
+            && Number.isInteger(context.retrievedContextChars) && context.retrievedContextChars >= 0
+            && Number.isInteger(context.promptChars) && context.promptChars > 0
+            && Number.isInteger(context.estimatedInputTokens) && context.estimatedInputTokens > 0
+            && typeof context.fullDocumentIncluded === "boolean"
+          )
           return typeof candidate.id === "string" && /^resp_[a-zA-Z0-9_-]+$/.test(candidate.id)
-            && typeof candidate.targetWords === "number" && candidate.targetWords >= 100 && candidate.targetWords <= 10000
+            && typeof candidate.targetWords === "number" && candidate.targetWords >= 10 && candidate.targetWords <= 10000
             && typeof candidate.expanded === "boolean"
             && (candidate.retries === undefined || (Number.isInteger(candidate.retries) && candidate.retries >= 0 && candidate.retries <= 1))
-        }).slice(0, 20)
+            && validContext
+        }).slice(0, 80)
       : []
     const downloadName = typeof body.downloadName === "string"
       ? body.downloadName.replace(/[\r\n"/\\]/g, "").slice(0, 150)
@@ -107,9 +121,11 @@ export async function POST(request: NextRequest) {
 
     const wordCounts = statuses.map((status) => (status.notes || "")
       .replace(/<[^>]+>/g, " ").replace(/&[a-z0-9#]+;/gi, " ").split(/\s+/).filter(Boolean).length)
-    // A complete draft that is close to its requested size is preferable to another full
-    // model pass. Truncated or substantially short sections still get corrected.
-    const needsExpansion = jobs.map((job, index) => !job.expanded && (statuses[index].truncated || wordCounts[index] < job.targetWords * 0.8))
+    // Allow one controlled recovery pass when a section is far below its supported
+    // target. The expansion prompt retains the relevance and anti-filler requirements.
+    const needsExpansion = jobs.map((job, index) => !job.expanded && (
+      statuses[index].truncated || wordCounts[index] < job.targetWords * 0.82
+    ))
     if (needsExpansion.some(Boolean)) {
       const updatedJobs = await Promise.all(jobs.map((job, index) =>
         needsExpansion[index] ? expandBackgroundNotes(job, wordCounts[index], statuses[index].truncated) : job

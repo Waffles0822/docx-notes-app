@@ -170,7 +170,7 @@ function flattenBullets(bullets: Bullet[], level = 0): GoogleDocParagraph[] {
       text: normalizeMathInProse(bullet.text),
       kind: "bullet" as const,
       level,
-      bold: level === 0 && bullet.children.length > 0,
+      bold: false,
     },
     ...flattenBullets(bullet.children, Math.min(level + 1, 3)),
   ])
@@ -192,8 +192,10 @@ function buildParagraphs(notesHtml: string, title: string, duration: string): Go
   return [
     { text: `Title Name : ${normalizeMathInProse(title.trim() || "Untitled Class")}`, kind: "meta" },
     { text: `Duration: ${duration.trim() || "N/A"}`, kind: "meta" },
+    // Inserted through the Docs text API, so the feedback row and the content that
+    // follows it remain normal selectable, copy-pastable document text.
     { text: "Click here to provide feedback", kind: "feedback" },
-    ...buildGroup("ANNOUNCEMENTS", announcements),
+    ...buildGroup("ANNOUNCEMENT", announcements),
     ...buildGroup("LECTURE", lecture),
   ]
 }
@@ -241,8 +243,8 @@ function buildDocRequests(notesHtml: string, title: string, duration: string, en
   requests.push({
     updateParagraphStyle: {
       range: { startIndex: 1, endIndex: 1 + textContent.length },
-      paragraphStyle: { lineSpacing: 108, spaceBelow: pt(1) },
-      fields: "lineSpacing,spaceBelow",
+      paragraphStyle: { alignment: "START", direction: "LEFT_TO_RIGHT", lineSpacing: 108, spaceBelow: pt(1) },
+      fields: "alignment,direction,lineSpacing,spaceBelow",
     },
   })
 

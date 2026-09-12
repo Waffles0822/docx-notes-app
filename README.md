@@ -16,6 +16,34 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+Create `.env.local` with an OpenAI API key before processing documents:
+
+```bash
+OPENAI_API_KEY=your_key_here
+```
+
+### Document context diagnostics
+
+Every background section logs a safe context manifest containing the section number,
+context strategy, source/focus/reference character counts, and estimated input tokens.
+The same manifest is returned with each generation job and attached to the OpenAI
+response metadata.
+
+To log the exact model input for every section while debugging locally, add:
+
+```bash
+AI_CONTEXT_DEBUG=full
+```
+
+Exact inputs can contain the complete uploaded document. Do not enable full context
+logging in production or anywhere logs are retained or shared.
+
+DOCX manual page breaks and Word-saved rendered page breaks are preserved as strict
+`SOURCE PAGE` boundaries. Form-feed characters provide the equivalent boundary in
+plain-text uploads. Each detected source page receives its own processing job (up to
+the 80-page application limit), while wider document context is used only for wording
+and terminology consistency—not as a source of page-local facts.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
