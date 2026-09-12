@@ -356,7 +356,7 @@ export async function writeNotesToGoogleDoc(
     .filter(Boolean).length
   console.info("Google Docs output layout", {
     generatedWords,
-    estimatedPagesAt350Words: Number((generatedWords / 350).toFixed(1)),
+    estimatedPagesAt300Words: Number((generatedWords / 300).toFixed(1)),
     formatting: "Verdana 12pt, 108% line spacing, concise complete bullets",
   })
 

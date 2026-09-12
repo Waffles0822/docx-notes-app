@@ -16,9 +16,12 @@ export const runtime = "nodejs"
 const QUEUED_RETRY_MS = 3 * 60 * 1000
 const QUEUED_FAILURE_MS = 5 * 60 * 1000
 const MAX_EXPANSION_ATTEMPTS = 3
-const MAX_OPENAI_EXPANSION_ATTEMPTS = 1
+// A single correction pass was not enough when a long requested document came back
+// far below its target. Recheck the actual returned word count and allow up to three
+// focused revisions, one section at a time, without parallel duplicate spending.
+const MAX_OPENAI_EXPANSION_ATTEMPTS = 3
 const MIN_TARGET_COMPLETION_RATIO = 0.88
-const MIN_SECTION_COVERAGE_RATIO = 0.6
+const MIN_SECTION_COVERAGE_RATIO = 0.85
 
 function getJobProgress(status: string, truncated: boolean): number {
   if (status === "completed") return 100
@@ -173,8 +176,8 @@ export async function POST(request: NextRequest) {
 
     // Expand only the section with the largest useful deficit on each pass. This avoids
     // paying for several revisions at once when one correction is enough to bring the
-    // whole document near its layout target. OpenAI gets one revision per section;
-    // Gemini keeps the larger legacy cap because its free-tier behavior differs.
+    // whole document near its layout target. Both providers may receive up to three
+    // sequential revisions per section when measured coverage remains too low.
     const eligibleExpansionIndexes = jobs.map((job, index) => {
       const expansionAttempts = job.expansionAttempts ?? (job.expanded ? 1 : 0)
       const maxAttempts = job.id.startsWith("gemini:") ? MAX_EXPANSION_ATTEMPTS : MAX_OPENAI_EXPANSION_ATTEMPTS
