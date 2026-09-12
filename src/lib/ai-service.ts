@@ -447,7 +447,7 @@ const MAX_TRANSCRIPT_UNIT_CHARS = 12000
 const MAX_TARGET_WORDS_PER_JOB = 3000
 const GEMINI_JOB_PREFIX = "gemini:"
 const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
-const DEFAULT_OPENAI_MODEL = "gpt-5-nano"
+const DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
 
 function getOpenAIModel(): string {
   const configured = process.env.OPENAI_MODEL?.trim()

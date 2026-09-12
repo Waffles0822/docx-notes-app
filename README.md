@@ -17,14 +17,15 @@ bun dev
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 Create `.env.local` with an OpenAI API key before processing documents. The defaults
-use GPT-5 nano with minimal reasoning for the lowest text-generation cost:
+use GPT-5.6 Luna with reasoning disabled. Luna is the lowest-cost current OpenAI model
+in this project with a 1.05-million-token context window:
 
 ```bash
 AI_PROVIDER=openai
 OPENAI_API_KEY=your_openai_api_key_here
 # Optional overrides
-OPENAI_MODEL=gpt-5-nano
-OPENAI_REASONING_EFFORT=minimal
+OPENAI_MODEL=gpt-5.6-luna
+OPENAI_REASONING_EFFORT=none
 ```
 
 Gemini remains available by setting `AI_PROVIDER=gemini` and adding `GEMINI_API_KEY`.
@@ -37,10 +38,13 @@ The same manifest is returned with each generation job and attached to the AI
 provider request where supported.
 
 Multi-section OpenAI runs place the stable document reference before each changing
-focus section. GPT-5 nano uses its supported implicit prompt caching with a stable
-cache-routing key, while GPT-5.6 overrides use an explicit 30-minute breakpoint.
-Completion logs include input, cache-write, cached-input, output, and total token
-counts so cache effectiveness can be verified without logging document contents.
+focus section. GPT-5.6 Luna uses an explicit 30-minute prompt-cache breakpoint so
+later sections can reuse the stable document context. Completion logs include input,
+cache-write, cached-input, output, and total token counts so cache effectiveness can
+be verified without logging document contents.
+
+GPT-5 nano remains available as an optional override for smaller documents, but its
+context window and entry-tier token rate limit are lower than Luna's.
 
 Generated DOCX and Google Docs output uses Verdana at 12 points throughout. Dark
 first-level bullets are short three-to-six-word titles, with source-supported detail
