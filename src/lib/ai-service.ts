@@ -1,9 +1,12 @@
-const SYSTEM_PROMPT = `Create organized notes from the class transcript below and go direct to the point.
+import { analyzeTranscriptTimeline, type TranscriptTimeline } from "@/lib/transcript-metadata"
+import { GoogleGenAI, ThinkingLevel } from "@google/genai"
 
-Include only important information, definitions, explanations, examples, announcements, equations, and formulas explicitly given in the transcript. Remove filler words, side conversations, jokes, repetitions, greetings, and off-topic comments. Preserve factual accuracy and do not add, infer, complete, or supplement information that was not discussed. Every note must be directly traceable to the supplied transcript. When the transcript does not provide enough information, produce fewer notes instead of using outside knowledge.
+const SYSTEM_PROMPT = `Create complete, organized, context-aware notes from the class transcript below.
+
+Retain all meaningful information, definitions, explanations, examples, instructions, qualifications, announcements, equations, formulas, and supporting details explicitly given in the transcript. Remove only genuine filler, side conversations, jokes, exact repetition, greetings, and off-topic comments. Do not compress several distinct ideas into a vague summary. Preserve factual accuracy and do not add, infer, complete, or supplement information that was not discussed. Every note must be directly traceable to the supplied transcript. When the transcript does not provide enough information, produce fewer notes instead of using outside knowledge.
 
 DOCUMENT-WIDE CONSISTENCY AND PAGE OWNERSHIP
-Use document-wide reference context only to keep names, terminology, capitalization, writing conventions, and established wording consistent. The focus section determines which material belongs in the current output. Never copy, move, infer, or introduce a fact, example, condition, explanation, or reminder from another source page or a non-focus section. When explicit SOURCE PAGE markers are present, treat them as strict ownership boundaries. Information may appear in output for a page only when that same page explicitly supports it. Correct grammar and sentence structure without changing the source meaning, certainty, attribution, or factual content. Never use a correction or wider context as permission to fill in a missing fact.
+Read the complete document-wide reference before writing the focus section. Use earlier and later sections to understand terminology, entities, pronouns, chronology, references, and the current section's relationship to the whole document. The focus section still determines which material belongs in the current output. Context from another page may clarify what focus-page wording refers to, but it must never be copied or presented as a new focus-page fact unless the focus page itself supports that fact. When explicit SOURCE PAGE markers are present, treat them as strict ownership boundaries. Correct grammar and sentence structure without changing the source meaning, certainty, attribution, or factual content. Never use a correction or wider context as permission to fill in a missing fact.
 
 TOP-LEVEL STRUCTURE
 Sort all transcript content into up to two top-level groups, in this order: announcement content (reminders, assessments, deadlines, housekeeping, course adjustments, logistics, schedule changes) and lecture content (topic material, definitions, explanations, examples, equations, formulas). Omit a group entirely if the transcript has no content for it. Do not write the group name yourself (do not output the words Announcement, Announcements, or Lecture); the surrounding application supplies those labels.
@@ -49,7 +52,10 @@ Read nearby bullets together before returning the result. Consecutive or nearby 
 
 For example, never return separate sibling bullets that repeatedly say The disclosure should show how AI was used, The disclosure should show what was asked of AI, and The disclosure should show how prompts were phrased. State the shared disclosure requirement once, then nest the three concrete details beneath it, or combine them into one concise sentence. Apply the same restructuring to every repeated lead-in, even when the bullets are not immediately adjacent.
 
-NO DUPLICATION ANYWHERE. Never state the same fact, definition, example, or detail more than once in the entire document. If a fact appears in multiple places in the transcript, include it only once in the notes, at the most relevant location. Do not repeat information across different sub-headers, different nesting levels, or between announcements and lecture sections.
+NO UNNECESSARY DUPLICATION. Remove exact restatements and genuinely overlapping wording, but preserve meaningful differences, qualifications, developments, examples, and page-specific context even when related points discuss the same subject. Combine related ideas only when doing so retains every distinct detail. Never discard useful content merely because it resembles an earlier point.
+
+COLONS AND SEMICOLONS
+Never use a colon or semicolon in any visible heading, bullet, sub-bullet, label, timestamp, or other note text. Use a period, comma, dash, or natural sentence restructuring instead. The only exception is content specifically about computer programming or coding, where a colon or semicolon may be retained when it is meaningful to the code, command, syntax, URL, data format, or technical explanation. Do not apply the exception merely because the source was digitally processed.
 
 RELEVANCE AND SPECIFICITY GATE
 Accuracy, relevance, specificity, and usefulness always take priority over requested length or amount of content. Include a note only when the source supports a concrete fact, definition, instruction, condition, reason, consequence, example, distinction, date, requirement, or actionable detail. Omit vague observations, transitions, isolated remarks, and low-value statements. When uncertain whether a note is useful, leave it out.
@@ -65,8 +71,8 @@ Write every note in the third person. Never use first-person or second-person wo
 
 Never mention the instructor. Do not write the instructor, the professor, the lecturer, the teacher, the speaker, or any personal name, and do not attribute a point to a person with verbs such as said, noted, stated, explained, emphasized, mentioned, discussed, or reminded. State every fact, deadline, requirement, opinion, and judgment directly on its own, so write The midterm covers the first four chapters rather than The instructor said the midterm covers the first four chapters.
 
-CONCISION
-Keep every bullet short and to the point. Write it in the fewest words that still carry the fact, and cut padding openers such as it is important to note that, it should be remembered that, the discussion covered, and this section explains. Do not echo the wording of the sub-header or the parent bullet inside a child bullet, and never state the same fact at two different levels of the outline.
+COMPLETENESS WITHOUT FILLER
+Use as many words as needed to make each bullet complete, specific, and understandable in context. Do not shorten a point when doing so would remove its subject, explanation, condition, example, reason, consequence, limitation, or connection to surrounding material. Cut only padding openers such as it is important to note that, it should be remembered that, the discussion covered, and this section explains. Do not echo the wording of the sub-header or parent bullet unnecessarily, but retain context needed for a child bullet to remain meaningful.
 
 Do not include routine classroom filler or administrative commentary unless it contains a specific instruction, deadline, concept, or assessment detail. Examples of text to omit include the instructor will answer questions during class, we will talk about this later, let us continue, and similar vague bridging lines.
 
@@ -140,16 +146,16 @@ export interface AIService {
 
 export const MAX_PAGES = 80
 
-// Words that fit on one page of the generated layout (12pt Verdana, 0.75" margins,
-// nested bullets). Verdana is a wide typeface, so this sits well below the count a
-// narrower font at a smaller size would allow. Drives both the AI's length target
-// and the page recommendation.
-const WORDS_PER_PAGE = 300
+// The DOCX and Google Docs exporters both use 11pt Arial, roughly single-spaced,
+// with compact spacing and nested bullets. A 500-word generation target per requested
+// page gives the layout enough material to land near the selected physical page count;
+// the final validator allows a small shortfall for headings and list spacing.
+const WORDS_PER_PAGE = 500
 
 // Spoken transcripts carry heavy redundancy, filler, and restatement. Measured against
-// reference transcript/notes pairs, the distilled outline lands near a third of the
-// source length, so this ratio converts raw transcript length into expected note length.
-const NOTE_COMPRESSION_RATIO = 0.34
+// Complete notes commonly need substantially more space than a terse summary. This
+// ratio influences the recommendation only; a user-selected page count remains valid.
+const NOTE_COMPRESSION_RATIO = 0.55
 
 // Permit supported ideas to be unpacked far enough to approach the requested page
 // count, while keeping a hard ceiling that prevents unlimited padding of short sources.
@@ -347,6 +353,7 @@ export type BackgroundNoteJob = {
   id: string
   targetWords: number
   expanded: boolean
+  expansionAttempts?: number
   retries?: number
   context?: BackgroundContextManifest
 }
@@ -362,7 +369,18 @@ export type BackgroundContextManifest = {
   promptChars: number
   estimatedInputTokens: number
   fullDocumentIncluded: boolean
+  documentTimestampCount?: number
+  documentDurationSeconds?: number
+  documentDuration?: string
+  focusTimestampCount?: number
+  focusStartTimestamp?: string | null
+  focusEndTimestamp?: string | null
+  previousSourceChars?: number
+  previousContextChars?: number
+  previousContextStrategy?: "none" | "full-document" | "exact-prefix" | "structured-prefix"
 }
+
+type AIProvider = "openai" | "gemini"
 
 type TranscriptChunk = {
   text: string
@@ -375,18 +393,26 @@ type DocumentContext = {
   units: string[]
   memory: string
   useFullDocument: boolean
+  timeline: TranscriptTimeline
 }
 
-// Keep the repeated full-document prefix below the model's context window and the
-// 272K-token long-context pricing threshold with room for instructions, focus text,
-// output, and conservative character-to-token estimation. Larger documents use a
-// deterministic global memory plus retrieval instead of losing the middle.
-const FULL_DOCUMENT_CONTEXT_MAX_CHARS = 500000
+// Prefer full-document continuity while keeping room for instructions, the focus text,
+// and output inside the model context window. Very large inputs can enter long-context
+// pricing; beyond this bound they use deterministic global memory plus retrieval rather
+// than silently losing the middle.
+const FULL_DOCUMENT_CONTEXT_MAX_CHARS = 1500000
 const MAX_FOCUS_CHARS = 220000
-const MAX_DOCUMENT_MEMORY_CHARS = 70000
-const MAX_RETRIEVED_CONTEXT_CHARS = 40000
+const MAX_DOCUMENT_MEMORY_CHARS = 140000
+const MAX_RETRIEVED_CONTEXT_CHARS = 80000
+const MAX_PREVIOUS_CONTEXT_CHARS = 500000
 const MAX_BACKGROUND_JOBS = 80
 const MAX_TRANSCRIPT_UNIT_CHARS = 12000
+// Long single responses tend to stop well below a requested multi-page length even
+// when ample output tokens remain. Use several moderate sections for long outputs;
+// each receives document-wide and cumulative context from buildBackgroundInput.
+const MAX_TARGET_WORDS_PER_JOB = 2500
+const GEMINI_JOB_PREFIX = "gemini:"
+const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 function getOpenAIKey(): string {
   const apiKey = process.env.OPENAI_API_KEY
@@ -491,8 +517,9 @@ function appendWithinBudget(selected: string[], candidates: string[], maxChars: 
 function buildDocumentContext(transcript: string): DocumentContext {
   const source = transcript.replace(/\r/g, "").replace(/[ \t]+/g, " ").trim()
   const units = transcriptUnits(source)
+  const timeline = analyzeTranscriptTimeline(source)
   if (source.length <= FULL_DOCUMENT_CONTEXT_MAX_CHARS) {
-    return { source, units, memory: "", useFullDocument: true }
+    return { source, units, memory: "", useFullDocument: true, timeline }
   }
 
   const cue = /\b(?:define|definition|means|called|known as|important|remember|because|therefore|example|formula|equation|step|process|exam|quiz|assignment|deadline|due|result|cause|effect|must|should|will)\b/i
@@ -516,7 +543,35 @@ function buildDocumentContext(transcript: string): DocumentContext {
     "END DOCUMENT-WIDE MEMORY",
   ].join("\n")
 
-  return { source, units, memory: memory.slice(0, MAX_DOCUMENT_MEMORY_CHARS), useFullDocument: false }
+  return { source, units, memory: memory.slice(0, MAX_DOCUMENT_MEMORY_CHARS), useFullDocument: false, timeline }
+}
+
+function getGeminiKey(): string {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey || apiKey === "your_gemini_api_key_here") {
+    throw new Error("Gemini is not configured. Add GEMINI_API_KEY to .env.local, then restart the app")
+  }
+  return apiKey
+}
+
+function getConfiguredProvider(): AIProvider {
+  const configured = process.env.AI_PROVIDER?.trim().toLowerCase()
+  if (configured === "gemini") {
+    getGeminiKey()
+    return "gemini"
+  }
+  if (configured === "openai") {
+    getOpenAIKey()
+    return "openai"
+  }
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "your_gemini_api_key_here") return "gemini"
+  getOpenAIKey()
+  return "openai"
+}
+
+function geminiInteractionId(jobId: string): string {
+  if (!jobId.startsWith(GEMINI_JOB_PREFIX)) throw new Error("Invalid Gemini background job ID")
+  return jobId.slice(GEMINI_JOB_PREFIX.length)
 }
 
 function retrieveRelatedContext(context: DocumentContext, chunk: TranscriptChunk): string {
@@ -537,6 +592,90 @@ function retrieveRelatedContext(context: DocumentContext, chunk: TranscriptChunk
   return selected.join("\n")
 }
 
+type PreviousContext = {
+  text: string
+  sourceChars: number
+  includedChars: number
+  strategy: "none" | "full-document" | "exact-prefix" | "structured-prefix"
+}
+
+function buildStructuredPreviousContext(units: string[], maxChars: number): string {
+  if (!units.length) return ""
+  const selected = new Set<number>()
+  let selectedChars = 0
+
+  const addIndexes = (indexes: number[], budget: number) => {
+    const limit = Math.min(maxChars, selectedChars + budget)
+    for (const index of indexes) {
+      if (selected.has(index)) continue
+      const size = units[index].length + 1
+      if (selectedChars + size > limit) continue
+      selected.add(index)
+      selectedChars += size
+    }
+  }
+
+  const beginning = units.map((_, index) => index)
+  const distributedCount = Math.min(160, units.length)
+  const distributed = Array.from({ length: distributedCount }, (_, index) =>
+    Math.min(units.length - 1, Math.floor(index * units.length / distributedCount))
+  )
+  const cue = /\b(?:define|definition|means|called|known as|important|because|therefore|example|formula|equation|step|process|exam|quiz|assignment|deadline|due|result|cause|effect|must|should|will)\b/i
+  const highInformation = units
+    .map((text, index) => ({ index, score: (cue.test(text) ? 5 : 0) + Math.min(text.length / 100, 3) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ index }) => index)
+  const recent = units.map((_, index) => units.length - index - 1)
+
+  addIndexes(beginning, Math.floor(maxChars * 0.12))
+  addIndexes(distributed, Math.floor(maxChars * 0.25))
+  addIndexes(highInformation, Math.floor(maxChars * 0.23))
+  addIndexes(recent, maxChars)
+
+  return [...selected]
+    .sort((a, b) => a - b)
+    .map((index) => units[index])
+    .join("\n")
+    .slice(0, maxChars)
+}
+
+function buildPreviousContext(context: DocumentContext, chunk: TranscriptChunk, total: number): PreviousContext {
+  if (total <= 1 || chunk.unitStart <= 0) {
+    return { text: "", sourceChars: 0, includedChars: 0, strategy: "none" }
+  }
+
+  const previousUnits = context.units.slice(0, chunk.unitStart)
+  const previousSourceChars = previousUnits.reduce((sum, unit) => sum + unit.length, 0)
+    + Math.max(0, previousUnits.length - 1)
+  if (context.useFullDocument) {
+    // The exact prefix is already present inside FULL DOCUMENT, so avoid duplicating
+    // it while recording that every previous character is available to the model.
+    return {
+      text: "",
+      sourceChars: previousSourceChars,
+      includedChars: previousSourceChars,
+      strategy: "full-document",
+    }
+  }
+  if (previousSourceChars <= MAX_PREVIOUS_CONTEXT_CHARS) {
+    const previousSource = previousUnits.join("\n")
+    return {
+      text: previousSource,
+      sourceChars: previousSourceChars,
+      includedChars: previousSourceChars,
+      strategy: "exact-prefix",
+    }
+  }
+
+  const structured = buildStructuredPreviousContext(previousUnits, MAX_PREVIOUS_CONTEXT_CHARS)
+  return {
+    text: structured,
+    sourceChars: previousSourceChars,
+    includedChars: structured.length,
+    strategy: "structured-prefix",
+  }
+}
+
 function debugModelContext(manifest: BackgroundContextManifest, input: string): void {
   console.info("AI document context manifest", manifest)
   if (process.env.AI_CONTEXT_DEBUG === "full") {
@@ -555,15 +694,25 @@ function buildBackgroundInput(
   // focus section. Never compact a focus section; doing so would silently discard
   // material that no other output section owns.
   const focus = chunk.text
+  const focusTimeline = analyzeTranscriptTimeline(focus)
+  const previous = buildPreviousContext(context, chunk, total)
   const related = retrieveRelatedContext(context, chunk)
-  const globalContext = context.useFullDocument
+  // A one-section job already has the complete document as its focus. Avoid sending
+  // the same document twice in that common path.
+  const globalContext = total === 1
+    ? ""
+    : context.useFullDocument
     ? `FULL DOCUMENT START\n${context.source}\nFULL DOCUMENT END`
     : context.memory
   const referenceInstruction = total === 1
     ? "The focus section is the entire document. Preserve every explicit SOURCE PAGE boundary and keep each fact on the page that supplies it."
-    : `The model has document-wide reference context plus focus section ${part} of ${total}. Use non-focus context only to preserve wording, names, terminology, capitalization, and style. Output only information explicitly supported within the focus section. If SOURCE PAGE markers are present, never enrich one page with details found only on another page. Omit a repeated fact from a later page when an earlier page already established it, but never move later-page details backward.`
+    : `The model has document-wide reference context, cumulative context from every earlier section, and focus section ${part} of ${total}. Use earlier context to preserve established terminology, entities, chronology, topic relationships, timestamp continuity, hierarchy, and formatting conventions. Output only information supported within the focus section; do not repeat earlier material merely because it is available as context. If SOURCE PAGE markers are present, never enrich one page with facts found only on another page. Remove an exact repeated fact only when no meaningful wording, qualification, example, or page-specific context would be lost.`
+  const previousBlock = previous.text
+    ? `PREVIOUS SECTIONS CONTEXT START\n${previous.text}\nPREVIOUS SECTIONS CONTEXT END`
+    : ""
   const relatedBlock = related ? `\n\nRELATED PASSAGES FROM OTHER SECTIONS START\n${related}\nRELATED PASSAGES FROM OTHER SECTIONS END` : ""
-  const input = `${globalContext}${relatedBlock}\n\nFOCUS SECTION ${part} START\n${focus}\nFOCUS SECTION ${part} END\n\n${referenceInstruction}\nCorrect obvious grammar and sentence-boundary errors while preserving the source meaning. Do not invent missing details. Keep wording, entity names, capitalization, and terminology consistent with the document-wide reference. Aim closely for ${Math.floor(targetWords * 0.92)} to ${Math.ceil(targetWords * 1.06)} words by fully explaining concrete ideas already supported by the focus section. Include only useful information; omit vague or unnecessary notes rather than using them to fill space. Never interpret an isolated statement such as This is the last class without explicit meaningful context. Consolidate repeated sentence frames, including repeated wording such as The disclosure should show, under one shared point. Do not use <strong> or <b> inside bullets. Before returning HTML, verify that Reminder is the only announcement sub-header, all announcement content is nested beneath it, sentence openings are not repetitive, every fact remains owned by its source page, no bullet is bold, and no unsupported detail was added.`
+  const contextBlocks = [globalContext, previousBlock, relatedBlock.trim()].filter(Boolean).join("\n\n")
+  const input = `${contextBlocks ? `${contextBlocks}\n\n` : ""}FOCUS SECTION ${part} START\n${focus}\nFOCUS SECTION ${part} END\n\n${referenceInstruction}\nCorrect obvious grammar and sentence-boundary errors while preserving the source meaning. Do not invent missing details. Keep wording, entity names, capitalization, and terminology consistent with the document-wide reference. Aim closely for ${Math.floor(targetWords * 0.92)} to ${Math.ceil(targetWords * 1.06)} words by retaining and fully explaining the meaningful ideas supported by the focus section. Do not aggressively summarize or compress. Preserve definitions, instructions, conditions, examples, supporting explanations, distinctions, and connections needed for understanding. Include only useful information and omit genuinely vague or unnecessary notes rather than using them to fill space. Never interpret an isolated statement such as This is the last class without explicit meaningful context. Consolidate repeated sentence frames, including repeated wording such as The disclosure should show, only when every meaningful difference remains. Do not use <strong> or <b> inside bullets. Do not use colons or semicolons in visible note text unless the focus material is specifically about programming or coding and the punctuation is meaningful to code or technical syntax. Before returning HTML, verify that no useful source detail was removed for brevity, relevant earlier context was considered, Reminder is the only announcement sub-header, all announcement content is nested beneath it, sentence openings are not repetitive, every fact remains owned by its source page, no bullet is bold, no prohibited colon or semicolon is visible, and no unsupported detail was added.`
   const promptChars = SYSTEM_PROMPT.length + input.length
   const manifest: BackgroundContextManifest = {
     part,
@@ -576,6 +725,15 @@ function buildBackgroundInput(
     promptChars,
     estimatedInputTokens: Math.ceil(promptChars / 3.6),
     fullDocumentIncluded: context.useFullDocument,
+    documentTimestampCount: context.timeline.timestampCount,
+    documentDurationSeconds: context.timeline.durationSeconds,
+    documentDuration: context.timeline.durationLabel,
+    focusTimestampCount: focusTimeline.timestampCount,
+    focusStartTimestamp: focusTimeline.firstTimestamp,
+    focusEndTimestamp: focusTimeline.lastTimestamp,
+    previousSourceChars: previous.sourceChars,
+    previousContextChars: previous.includedChars,
+    previousContextStrategy: previous.strategy,
   }
   debugModelContext(manifest, input)
   return { input, manifest }
@@ -586,7 +744,7 @@ function buildBackgroundInput(
 // rather than tightly — a truncated response is far more disruptive than an
 // over-provisioned one, since it forces a whole extra expansion round-trip.
 function computeMaxOutputTokens(targetWords: number): number {
-  return Math.min(32000, Math.max(4000, Math.ceil(targetWords * 3.2)))
+  return Math.min(64000, Math.max(4000, Math.ceil(targetWords * 3.2)))
 }
 
 async function submitBackgroundChunk(
@@ -614,6 +772,12 @@ async function submitBackgroundChunk(
           focus_chars: String(manifest.focusChars),
           section: `${manifest.part}/${manifest.total}`,
           estimated_input_tokens: String(manifest.estimatedInputTokens),
+          document_duration: manifest.documentDuration || "not-detected",
+          document_timestamp_count: String(manifest.documentTimestampCount || 0),
+          focus_time_range: `${manifest.focusStartTimestamp || "none"}-${manifest.focusEndTimestamp || "none"}`,
+          previous_context_strategy: manifest.previousContextStrategy || "none",
+          previous_source_chars: String(manifest.previousSourceChars || 0),
+          previous_context_chars: String(manifest.previousContextChars || 0),
         },
       }, 60000)
       if (response.ok && data?.id) return data.id
@@ -628,36 +792,133 @@ async function submitBackgroundChunk(
   throw new Error(lastError)
 }
 
-export async function startBackgroundNotes(transcript: string, pages: number): Promise<BackgroundNoteJob[]> {
-  const apiKey = getOpenAIKey()
-  const context = buildDocumentContext(transcript)
-  // Use larger chunks for larger documents to reduce API calls and avoid timeouts
-  // 1-10 pages: 5 pages per chunk, 11-30: 8 pages, 31-50: 10 pages, 51+: 12 pages
-  let pagesPerChunk = 5
-  if (pages > 50) pagesPerChunk = 12
-  else if (pages > 30) pagesPerChunk = 10
-  else if (pages > 10) pagesPerChunk = 8
+async function submitGeminiChunk(
+  apiKey: string,
+  input: string,
+  targetWords: number,
+  previousInteractionId?: string
+): Promise<string> {
+  try {
+    const ai = new GoogleGenAI({ apiKey })
+    const interaction = await ai.interactions.create({
+      model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
+      input,
+      system_instruction: SYSTEM_PROMPT,
+      previous_interaction_id: previousInteractionId,
+      background: true,
+      store: true,
+      generation_config: {
+        max_output_tokens: Math.min(65536, computeMaxOutputTokens(targetWords)),
+        thinking_level: "low",
+      },
+    })
+    if (!interaction.id) throw new Error("Gemini did not return an interaction ID")
+    return `${GEMINI_JOB_PREFIX}${interaction.id}`
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Gemini did not accept the background request"
+    throw new Error(`Gemini request failed: ${message}`)
+  }
+}
 
-  const pageDrivenChunks = Math.ceil(pages / pagesPerChunk)
-  const sizeDrivenChunks = Math.ceil(context.source.length / MAX_FOCUS_CHARS)
-  const sourcePageChunks = countSourcePages(context.source)
-  const chunks = splitTranscript(context.source, Math.min(MAX_BACKGROUND_JOBS, Math.max(pageDrivenChunks, sizeDrivenChunks, sourcePageChunks)))
-  const sourceWordCounts = chunks.map((chunk) => countTranscriptWords(chunk.text))
-  const totalSourceWords = sourceWordCounts.reduce((sum, count) => sum + count, 0)
+export async function startBackgroundNotes(transcript: string, pages: number): Promise<BackgroundNoteJob[]> {
+  const provider = getConfiguredProvider()
+  const apiKey = provider === "gemini" ? getGeminiKey() : getOpenAIKey()
+  const context = buildDocumentContext(transcript)
+  const totalSourceWords = countTranscriptWords(context.source)
   const requestedTargetWords = pages * WORDS_PER_PAGE
   const supportedExpansionCeiling = Math.max(100, Math.floor(totalSourceWords * MAX_SUPPORTED_ELABORATION_RATIO))
   const totalTargetWords = Math.min(requestedTargetWords, supportedExpansionCeiling)
+  // Split only when the source is large or the requested output exceeds the length a
+  // single generation reliably follows. Every resulting section still receives the
+  // document-wide reference and cumulative earlier-section context.
+  const sizeDrivenChunks = Math.ceil(context.source.length / MAX_FOCUS_CHARS)
+  const outputDrivenChunks = Math.ceil(totalTargetWords / MAX_TARGET_WORDS_PER_JOB)
+  const sourcePageChunks = countSourcePages(context.source)
+  const requestedChunks = Math.min(MAX_BACKGROUND_JOBS, Math.max(1, sizeDrivenChunks, outputDrivenChunks))
+  const chunks = splitTranscript(context.source, requestedChunks)
+  const coverageComplete = chunks.length > 0
+    && chunks[0].unitStart === 0
+    && chunks[chunks.length - 1].unitEnd === context.units.length
+    && chunks.every((chunk, index) => index === 0 || chunk.unitStart === chunks[index - 1].unitEnd)
+  if (!coverageComplete) {
+    throw new Error("The transcript could not be divided into complete, contiguous sections.")
+  }
+  const sourceWordCounts = chunks.map((chunk) => countTranscriptWords(chunk.text))
+  const coveredSourceWords = sourceWordCounts.reduce((sum, count) => sum + count, 0)
+  if (coveredSourceWords !== totalSourceWords) {
+    throw new Error(`Transcript coverage mismatch: expected ${totalSourceWords} words but assigned ${coveredSourceWords}.`)
+  }
 
-  return Promise.all(chunks.map(async (chunk, index) => {
+  const prepared = chunks.map((chunk, index) => {
     const proportionalTarget = Math.round(totalTargetWords * sourceWordCounts[index] / Math.max(1, totalSourceWords))
     const targetWords = Math.max(10, proportionalTarget)
-    const { input, manifest } = buildBackgroundInput(context, chunk, index + 1, chunks.length, targetWords)
-    const id = await submitBackgroundChunk(apiKey, input, targetWords, manifest)
-    return { id, targetWords, expanded: false, retries: 0, context: manifest }
+    const preparedInput = buildBackgroundInput(context, chunk, index + 1, chunks.length, targetWords)
+    return { chunk, targetWords, ...preparedInput }
+  })
+
+  console.info("AI document processing plan", {
+    requestedOutputPages: pages,
+    requestedTargetWords,
+    effectiveTargetWords: totalTargetWords,
+    supportedExpansionCeiling,
+    encodedSourcePages: sourcePageChunks || "not encoded in source",
+    documentCharacters: context.source.length,
+    documentWords: totalSourceWords,
+    documentTimestampCount: context.timeline.timestampCount,
+    documentFirstTimestamp: context.timeline.firstTimestamp,
+    documentLastTimestamp: context.timeline.lastTimestamp,
+    documentMaxTimestamp: context.timeline.maxTimestamp,
+    documentDuration: context.timeline.durationLabel || "not detected",
+    documentDurationSeconds: context.timeline.durationSeconds,
+    sectionCount: chunks.length,
+    chunking: chunks.length === 1 ? "single continuous document" : "size/output constrained with cumulative context",
+    sizeDrivenChunks,
+    outputDrivenChunks,
+    coveredUnits: context.units.length,
+    coveredSourceWords,
+    coverageComplete,
+    provider,
+    sections: prepared.map(({ chunk, manifest }, index) => {
+      const timeline = analyzeTranscriptTimeline(chunk.text)
+      return {
+        part: `${index + 1}/${chunks.length}`,
+        sourceWords: sourceWordCounts[index],
+        timestampCount: timeline.timestampCount,
+        firstTimestamp: timeline.firstTimestamp,
+        lastTimestamp: timeline.lastTimestamp,
+        previousSourceChars: manifest.previousSourceChars,
+        previousContextChars: manifest.previousContextChars,
+        previousContextStrategy: manifest.previousContextStrategy,
+      }
+    }),
+  })
+
+  return Promise.all(prepared.map(async ({ input, targetWords, manifest }) => {
+    const id = provider === "gemini"
+      ? await submitGeminiChunk(apiKey, input, targetWords)
+      : await submitBackgroundChunk(apiKey, input, targetWords, manifest)
+    return { id, targetWords, expanded: false, expansionAttempts: 0, retries: 0, context: manifest }
   }))
 }
 
 export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promise<BackgroundNoteJob> {
+  if (job.id.startsWith(GEMINI_JOB_PREFIX)) {
+    const apiKey = getGeminiKey()
+    const ai = new GoogleGenAI({ apiKey })
+    const interactionId = geminiInteractionId(job.id)
+    const source = await ai.interactions.get(interactionId)
+    if (typeof source.input !== "string") {
+      throw new Error("Could not recover the queued Gemini note section input.")
+    }
+    const id = await submitGeminiChunk(apiKey, source.input, job.targetWords)
+    try {
+      await ai.interactions.cancel(interactionId)
+    } catch {
+      // The replacement can proceed even if the stalled interaction cannot be cancelled.
+    }
+    return { ...job, id, retries: (job.retries || 0) + 1 }
+  }
+
   const apiKey = getOpenAIKey()
   const source = await getOpenAIJson(
     `https://api.openai.com/v1/responses/${encodeURIComponent(job.id)}`,
@@ -683,6 +944,12 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
       focus_chars: String(job.context.focusChars),
       section: `${job.context.part}/${job.context.total}`,
       estimated_input_tokens: String(job.context.estimatedInputTokens),
+      document_duration: job.context.documentDuration || "not-detected",
+      document_timestamp_count: String(job.context.documentTimestampCount || 0),
+      focus_time_range: `${job.context.focusStartTimestamp || "none"}-${job.context.focusEndTimestamp || "none"}`,
+      previous_context_strategy: job.context.previousContextStrategy || "none",
+      previous_source_chars: String(job.context.previousSourceChars || 0),
+      previous_context_chars: String(job.context.previousContextChars || 0),
     } : undefined),
   }, 60000)
   if (!response.ok || !data?.id) {
@@ -705,9 +972,21 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
 }
 
 export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords: number, wasTruncated = false): Promise<BackgroundNoteJob> {
+  const attempt = (job.expansionAttempts ?? (job.expanded ? 1 : 0)) + 1
+  const remainingWords = Math.max(0, job.targetWords - currentWords)
   const input = wasTruncated
-    ? `The previous response was cut off before it finished (it ran out of output budget) and may contain broken or incomplete HTML. Ignore its broken tail and return a complete, well-formed replacement HTML document covering the same transcript material, using the same section structure. Aim for ${Math.floor(job.targetWords * 0.92)} to ${Math.ceil(job.targetWords * 1.06)} words if the source supports it.`
-    : `The notes contain about ${currentWords} words and are substantially below the supported ${job.targetWords}-word target. Return a complete replacement HTML document and aim for ${Math.floor(job.targetWords * 0.92)} to ${Math.ceil(job.targetWords * 1.06)} words by fully unpacking concrete definitions, explanations, analogy mappings, examples, steps, equations, formulas, conditions, causes, effects, announcements, and distinctions explicitly present in the original transcript. Accuracy and relevance still take priority over length. Remove vague observations, repeated lead-ins, generic statements, filler transitions, and unnecessary notes. Do not repeat ideas, change page ownership, interpret ambiguous remarks, introduce outside knowledge, or use bold text inside bullets. Remain shorter only when the source cannot support the target without violating those rules.`
+    ? `Length correction pass ${attempt}. Use the previous generated response as the baseline. It was cut off by the output budget, so preserve every correct, useful, complete portion and replace only its broken tail. Return complete, well-formed HTML covering the same transcript material and structure. Do not shorten intact content. Aim for ${Math.floor(job.targetWords * 0.92)} to ${Math.ceil(job.targetWords * 1.06)} words if the source supports it.`
+    : `Length correction pass ${attempt}. Use the previous generated response as the primary baseline. Preserve all correct, useful content and its established hierarchy; improve it instead of replacing it with another short summary. The prior notes contain about ${currentWords} words, leaving a supported shortfall of about ${remainingWords} words against the ${job.targetWords}-word target. Recover meaningful definitions, explanations, analogy mappings, examples, steps, equations, formulas, conditions, causes, effects, announcements, distinctions, and connections that the original transcript supports but the previous response omitted or compressed. Fully develop those source-supported details instead of merely rephrasing existing bullets. Aim for ${Math.floor(job.targetWords * 0.92)} to ${Math.ceil(job.targetWords * 1.06)} words when supported. Remove only vague observations, exact redundancy, repeated lead-ins, generic filler, and unnecessary notes. Preserve meaningful differences and context. Do not change page ownership, interpret ambiguous remarks, introduce outside knowledge, or use bold text inside bullets.`
+
+  if (job.id.startsWith(GEMINI_JOB_PREFIX)) {
+    const id = await submitGeminiChunk(
+      getGeminiKey(),
+      input,
+      job.targetWords * (wasTruncated ? 1.5 : 1),
+      geminiInteractionId(job.id)
+    )
+    return { ...job, id, expanded: true, expansionAttempts: attempt }
+  }
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
     model: process.env.OPENAI_MODEL || "gpt-5.6-terra",
@@ -725,15 +1004,59 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
       focus_chars: String(job.context.focusChars),
       section: `${job.context.part}/${job.context.total}`,
       estimated_input_tokens: String(job.context.estimatedInputTokens),
+      document_duration: job.context.documentDuration || "not-detected",
+      document_timestamp_count: String(job.context.documentTimestampCount || 0),
+      focus_time_range: `${job.context.focusStartTimestamp || "none"}-${job.context.focusEndTimestamp || "none"}`,
+      previous_context_strategy: job.context.previousContextStrategy || "none",
+      previous_source_chars: String(job.context.previousSourceChars || 0),
+      previous_context_chars: String(job.context.previousContextChars || 0),
     } : undefined,
   }, 60000)
   if (!response.ok || !data?.id) {
     throw new Error(data?.error?.message || "OpenAI could not start the length correction pass")
   }
-  return { ...job, id: data.id, expanded: true }
+  return { ...job, id: data.id, expanded: true, expansionAttempts: attempt }
+}
+
+async function getGeminiBackgroundNoteStatus(id: string): Promise<BackgroundNoteStatus> {
+  try {
+    const interaction = await new GoogleGenAI({ apiKey: getGeminiKey() })
+      .interactions.get(geminiInteractionId(id))
+    const createdAt = interaction.created
+      ? Math.floor(new Date(interaction.created).getTime() / 1000)
+      : undefined
+
+    if (interaction.status === "completed") {
+      return { id, status: "completed", notes: cleanResponse(interaction.output_text), createdAt }
+    }
+    if (interaction.status === "incomplete" || interaction.status === "budget_exceeded") {
+      if (interaction.output_text?.trim()) {
+        return { id, status: "completed", notes: cleanResponse(interaction.output_text), truncated: true, createdAt }
+      }
+      return { id, status: "failed", error: `Gemini interaction ${interaction.status}.`, createdAt }
+    }
+    if (interaction.status === "failed" || interaction.status === "cancelled") {
+      const detail = interaction.errors?.map((error) => error.message || error.code).filter(Boolean).join("; ")
+      return { id, status: interaction.status, error: detail || `Gemini interaction ${interaction.status}.`, createdAt }
+    }
+    if (interaction.status === "requires_action") {
+      return { id, status: "failed", error: "Gemini unexpectedly requested an unsupported external action.", createdAt }
+    }
+    return {
+      id,
+      status: interaction.status === "queued" ? "queued" : "in_progress",
+      createdAt,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Gemini status check failed"
+    if (isTransientOpenAIError(message)) return { id, status: "in_progress", error: message }
+    throw new Error(`Gemini status check failed: ${message}`)
+  }
 }
 
 export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNoteStatus> {
+  if (id.startsWith(GEMINI_JOB_PREFIX)) return getGeminiBackgroundNoteStatus(id)
+
   let response: Response
   let data: ApiResponse
   try {
@@ -805,27 +1128,37 @@ export function mergeNoteSections(outputs: string[]): string {
 }
 
 function getService(): AIService {
-  const openAIKey = process.env.OPENAI_API_KEY
-  if (openAIKey && openAIKey !== "your_openai_api_key_here") return createOpenAIService(openAIKey)
+  const provider = process.env.AI_PROVIDER?.trim().toLowerCase()
+  if (provider === "gemini") return createGeminiService(getGeminiKey())
+  if (provider === "openai") return createOpenAIService(getOpenAIKey())
+  if (provider && provider !== "mock") {
+    throw new Error("AI_PROVIDER must be set to gemini, openai, or mock.")
+  }
 
-  // Offline preview mode remains available until an OpenAI key is added.
-  if (process.env.USE_MOCK_AI === "true") return createMockService()
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "your_gemini_api_key_here") {
+    return createGeminiService(getGeminiKey())
+  }
+  if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "your_openai_api_key_here") {
+    return createOpenAIService(getOpenAIKey())
+  }
+
+  if (provider === "mock" || process.env.USE_MOCK_AI === "true") return createMockService()
 
   throw new Error(
-    "OpenAI is not configured. Add OPENAI_API_KEY to .env.local, then restart the app"
+    "No AI provider is configured. Add GEMINI_API_KEY and AI_PROVIDER=gemini to .env.local, then restart the app."
   )
 }
 
 function createOpenAIService(apiKey: string): AIService {
   return {
     async generateNotes(transcript: string, pages: number): Promise<string> {
-      const source = truncateTranscript(transcript, 400000)
+      const source = truncateTranscript(transcript, FULL_DOCUMENT_CONTEXT_MAX_CHARS)
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
         model: process.env.OPENAI_MODEL || "gpt-5.6-terra",
         instructions: SYSTEM_PROMPT,
         input: `${buildUserPrompt(source, pages)}\n\nDo not include vague bridge statements, generic classroom filler, or administrative remarks unless they carry a concrete instruction or fact.`,
         text: { verbosity: "medium" },
-        max_output_tokens: Math.min(16384, Math.max(4000, pages * 900)),
+        max_output_tokens: Math.min(64000, Math.max(4000, pages * 900)),
         store: false,
       }, 60000)
       if (!response.ok) {
@@ -844,37 +1177,18 @@ function createOpenAIService(apiKey: string): AIService {
 function createGeminiService(apiKey: string): AIService {
   return {
     async generateNotes(transcript: string, pages: number): Promise<string> {
-      const truncated = truncateTranscript(transcript, 80000)
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: SYSTEM_PROMPT },
-                  { text: `${buildUserPrompt(truncated, pages)}\n\nDo not include vague bridge statements, generic classroom filler, or administrative remarks unless they carry a concrete instruction or fact.` },
-                ],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.1,
-              maxOutputTokens: 8192,
-            },
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        const error = await response.text()
-        throw new Error(`Gemini API error: ${error}`)
-      }
-
-      const data = await response.json()
-      return cleanResponse(data.candidates?.[0]?.content?.parts?.[0]?.text)
+      const source = truncateTranscript(transcript, FULL_DOCUMENT_CONTEXT_MAX_CHARS)
+      const response = await new GoogleGenAI({ apiKey }).models.generateContent({
+        model: process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
+        contents: `${buildUserPrompt(source, pages)}\n\nDo not include vague bridge statements, generic classroom filler, or administrative remarks unless they carry a concrete instruction or fact.`,
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          temperature: 0.1,
+          maxOutputTokens: Math.min(65536, Math.max(4000, pages * 900)),
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        },
+      })
+      return cleanResponse(response.text)
     },
   }
 }

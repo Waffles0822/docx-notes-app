@@ -40,8 +40,25 @@ function decodeHtml(value: string): string {
     .trim()
 }
 
+function isProgrammingContext(value: string): boolean {
+  return /\b(?:computer programming|programming|coding|source code|software development|software developer|compiler|terminal|command line|api|http|url|html|css|javascript|typescript|python|java|c\+\+|c#|sql|json|xml|git|npm|node\.js|react|next\.js)\b/i.test(value)
+    || /(?:=>|::|:\/\/|[{}]|`[^`]+`|\b(?:const|let|var|return|import|export|SELECT|INSERT|UPDATE|DELETE)\b)/.test(value)
+}
+
+export function sanitizeNotePunctuation(value: string): string {
+  if (!value || isProgrammingContext(value)) return value
+  return value
+    .replace(/\b(\d{1,2}):(\d{2}):(\d{2})\b/g, "$1h $2m $3s")
+    .replace(/\b(\d{1,2}):(\d{2})\b/g, "$1.$2")
+    .replace(/(\d)\s*:\s*(\d)/g, "$1 to $2")
+    .replace(/\s*;\s*/g, ". ")
+    .replace(/\s*:\s*/g, " — ")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+}
+
 function normalizeNoteText(value: string): string {
-  return decodeHtml(value)
+  return sanitizeNotePunctuation(decodeHtml(value))
     .replace(/\s+([.,;!?])/g, "$1")
     .replace(/\(\s+/g, "(")
     .replace(/\s+\)/g, ")")
@@ -172,21 +189,21 @@ function buildBulletLevels() {
 
 export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promise<Buffer> {
   const { announcements, lecture } = parseNotes(html)
-  const titleName = meta.titleName?.trim() || "Untitled Class"
-  const duration = meta.duration?.trim() || "N/A"
+  const titleName = sanitizeNotePunctuation(meta.titleName?.trim() || "Untitled Class")
+  const duration = sanitizeNotePunctuation(meta.duration?.trim() || "N/A")
 
   const children: Paragraph[] = [
     new Paragraph({
       alignment: AlignmentType.LEFT,
       bidirectional: false,
       spacing: { after: 40, line: 240 },
-      children: [new TextRun({ text: `Title Name : ${normalizeMathInProse(titleName)}`, size: BODY_SIZE, font: FONT })],
+      children: [new TextRun({ text: `Title Name — ${normalizeMathInProse(titleName)}`, size: BODY_SIZE, font: FONT })],
     }),
     new Paragraph({
       alignment: AlignmentType.LEFT,
       bidirectional: false,
       spacing: { after: 40, line: 240 },
-      children: [new TextRun({ text: `Duration: ${duration}`, size: BODY_SIZE, font: FONT })],
+      children: [new TextRun({ text: `Duration — ${duration}`, size: BODY_SIZE, font: FONT })],
     }),
     new Paragraph({
       alignment: AlignmentType.LEFT,

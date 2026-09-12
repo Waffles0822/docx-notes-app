@@ -16,18 +16,23 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-Create `.env.local` with an OpenAI API key before processing documents:
+Create `.env.local` with a Gemini API key before processing documents:
 
 ```bash
-OPENAI_API_KEY=your_key_here
+AI_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_api_key_here
+# Optional override; the default is gemini-3.1-flash-lite
+GEMINI_MODEL=gemini-3.1-flash-lite
 ```
+
+To use OpenAI instead, set `AI_PROVIDER=openai` and add `OPENAI_API_KEY`.
 
 ### Document context diagnostics
 
 Every background section logs a safe context manifest containing the section number,
 context strategy, source/focus/reference character counts, and estimated input tokens.
-The same manifest is returned with each generation job and attached to the OpenAI
-response metadata.
+The same manifest is returned with each generation job and attached to the AI
+provider request where supported.
 
 To log the exact model input for every section while debugging locally, add:
 

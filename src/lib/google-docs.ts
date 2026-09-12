@@ -1,6 +1,6 @@
 import { google, docs_v1 } from "googleapis"
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
-import { parseNotes, type Bullet, type SubSection } from "./docx-generator"
+import { parseNotes, sanitizeNotePunctuation, type Bullet, type SubSection } from "./docx-generator"
 import { normalizeMathInProse } from "./math-format"
 
 export interface GoogleTokens {
@@ -190,8 +190,8 @@ function buildGroup(label: string, sections: SubSection[]): GoogleDocParagraph[]
 function buildParagraphs(notesHtml: string, title: string, duration: string): GoogleDocParagraph[] {
   const { announcements, lecture } = parseNotes(notesHtml)
   return [
-    { text: `Title Name : ${normalizeMathInProse(title.trim() || "Untitled Class")}`, kind: "meta" },
-    { text: `Duration: ${duration.trim() || "N/A"}`, kind: "meta" },
+    { text: `Title Name — ${normalizeMathInProse(sanitizeNotePunctuation(title.trim() || "Untitled Class"))}`, kind: "meta" },
+    { text: `Duration — ${sanitizeNotePunctuation(duration.trim() || "N/A")}`, kind: "meta" },
     // Inserted through the Docs text API, so the feedback row and the content that
     // follows it remain normal selectable, copy-pastable document text.
     { text: "Click here to provide feedback", kind: "feedback" },
@@ -348,6 +348,16 @@ export async function writeNotesToGoogleDoc(
   const content = document.data.body?.content || []
   const endIndex = content.at(-1)?.endIndex || 1
   const requests = buildDocRequests(notesHtml, title, duration, endIndex)
+  const generatedWords = notesHtml
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&[a-z0-9#]+;/gi, " ")
+    .split(/\s+/)
+    .filter(Boolean).length
+  console.info("Google Docs output layout", {
+    generatedWords,
+    estimatedPagesAt500Words: Number((generatedWords / 500).toFixed(1)),
+    formatting: "Arial 11pt, 108% line spacing",
+  })
 
   await docs.documents.batchUpdate({
     documentId: docId,
