@@ -350,11 +350,11 @@ async function submitBackgroundChunk(
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-        model: process.env.OPENAI_MODEL || "gpt-5.6-terra",
+        model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
         instructions: SYSTEM_PROMPT,
         input: `${buildUserPrompt(chunkTranscript, pages, targetWords)}\n\nThis is transcript part ${part} of ${total}. Create sections only for topics present in this part. Do not repeat information from other parts. Aim for ${targetRange} words if the source supports it.`,
         text: { verbosity: "medium" },
-        reasoning: { effort: "low" },
+        reasoning: { effort: "none" },
         max_output_tokens: computeMaxOutputTokens(targetWords),
         background: true,
       }, 60000)
@@ -404,11 +404,11 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
   }
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-    model: source.data.model || process.env.OPENAI_MODEL || "gpt-5.6-terra",
+    model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
     instructions: source.data.instructions || SYSTEM_PROMPT,
     input: source.data.input,
     text: { verbosity: "medium" },
-    reasoning: { effort: "low" },
+    reasoning: { effort: "none" },
     max_output_tokens: source.data.max_output_tokens || computeMaxOutputTokens(job.targetWords),
     background: true,
   }, 60000)
@@ -437,12 +437,12 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
     : `The notes contain about ${currentWords} words, below the ${job.targetWords}-word target. Return a complete replacement HTML document. Expand only by recovering concrete definitions, explanations, analogy mappings, examples, steps, equations, formulas, announcements, and distinctions that were explicitly present in the original transcript but omitted from the notes. Remove vague or generic statements, filler transitions, and routine classroom commentary. Do not repeat ideas or introduce outside knowledge. Aim for ${Math.floor(job.targetWords * 0.9)} to ${Math.ceil(job.targetWords * 1.08)} words if the source supports it.`
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
-    model: process.env.OPENAI_MODEL || "gpt-5.6-terra",
+    model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
     previous_response_id: job.id,
     instructions: SYSTEM_PROMPT,
     input,
     text: { verbosity: "medium" },
-    reasoning: { effort: "low" },
+    reasoning: { effort: "none" },
     max_output_tokens: computeMaxOutputTokens(job.targetWords * (wasTruncated ? 1.5 : 1)),
     background: true,
   }, 60000)
@@ -533,11 +533,12 @@ function createOpenAIService(apiKey: string): AIService {
     async generateNotes(transcript: string, pages: number): Promise<string> {
       const source = truncateTranscript(transcript, 400000)
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-        model: process.env.OPENAI_MODEL || "gpt-5.6-terra",
+        model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
         instructions: SYSTEM_PROMPT,
         input: `${buildUserPrompt(source, pages)}\n\nDo not include vague bridge statements, generic classroom filler, or administrative remarks unless they carry a concrete instruction or fact.`,
         text: { verbosity: "medium" },
         max_output_tokens: Math.min(16384, Math.max(4000, pages * 900)),
+        reasoning: { effort: "none" },
         store: false,
       }, 60000)
       if (!response.ok) {
