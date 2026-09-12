@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { decryptGoogleTokens, encryptGoogleTokens, ensureFreshGoogleTokens, writeNotesToGoogleDoc } from "@/lib/google-docs"
-import { normalizeDurationMinutes } from "@/lib/transcript-metadata"
 
 const GOOGLE_SESSION_SECONDS = 60 * 60 * 24 * 30
 
@@ -19,7 +18,7 @@ export async function POST(request: NextRequest) {
     const docUrl = typeof body.docUrl === "string" ? body.docUrl.trim() : ""
     const notesHtml = typeof body.notesHtml === "string" ? body.notesHtml : ""
     const title = typeof body.title === "string" ? body.title.slice(0, 150) : "Organized Notes"
-    const duration = typeof body.duration === "string" ? normalizeDurationMinutes(body.duration.slice(0, 40)) : ""
+    const duration = typeof body.duration === "string" ? body.duration.slice(0, 40) : ""
     if (!docUrl || !notesHtml) {
       return NextResponse.json({ error: "Google Docs URL and generated notes are required." }, { status: 400 })
     }

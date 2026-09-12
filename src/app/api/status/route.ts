@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { expandBackgroundNotes, getBackgroundNoteStatus, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
 import { createNotesDocx } from "@/lib/docx-generator"
-import { normalizeDurationMinutes } from "@/lib/transcript-metadata"
 
 type JobStatus = {
   id: string
@@ -9,19 +8,12 @@ type JobStatus = {
   progress: number // 0-100 for this job
 }
 
-// The final poll assembles the .docx, and an expansion pass may start new provider jobs.
+// The final poll assembles the .docx, and an expansion pass may start new OpenAI jobs.
 export const maxDuration = 60
 export const runtime = "nodejs"
 
 const QUEUED_RETRY_MS = 3 * 60 * 1000
 const QUEUED_FAILURE_MS = 5 * 60 * 1000
-const MAX_EXPANSION_ATTEMPTS = 3
-// A single correction pass was not enough when a long requested document came back
-// far below its target. Recheck the actual returned word count and allow up to three
-// focused revisions, one section at a time, without parallel duplicate spending.
-const MAX_OPENAI_EXPANSION_ATTEMPTS = 3
-const MIN_TARGET_COMPLETION_RATIO = 0.88
-const MIN_SECTION_COVERAGE_RATIO = 0.85
 
 function getJobProgress(status: string, truncated: boolean): number {
   if (status === "completed") return 100
@@ -37,49 +29,17 @@ export async function POST(request: NextRequest) {
       ? body.jobs.filter((job: unknown): job is BackgroundNoteJob => {
           if (!job || typeof job !== "object") return false
           const candidate = job as Partial<BackgroundNoteJob>
-          const context = candidate.context
-          const validTimelineContext = context === undefined || (
-            (context.documentTimestampCount === undefined || (Number.isInteger(context.documentTimestampCount) && context.documentTimestampCount >= 0))
-            && (context.documentDurationSeconds === undefined || (Number.isInteger(context.documentDurationSeconds) && context.documentDurationSeconds >= 0))
-            && (context.documentDurationMinutes === undefined || (Number.isInteger(context.documentDurationMinutes) && context.documentDurationMinutes >= 0))
-            && (context.documentDuration === undefined || (typeof context.documentDuration === "string" && context.documentDuration.length <= 20))
-            && (context.focusTimestampCount === undefined || (Number.isInteger(context.focusTimestampCount) && context.focusTimestampCount >= 0))
-            && (context.focusStartTimestamp === undefined || context.focusStartTimestamp === null || (typeof context.focusStartTimestamp === "string" && context.focusStartTimestamp.length <= 20))
-            && (context.focusEndTimestamp === undefined || context.focusEndTimestamp === null || (typeof context.focusEndTimestamp === "string" && context.focusEndTimestamp.length <= 20))
-          )
-          const validContext = context === undefined || (
-            Number.isInteger(context.part) && context.part >= 1 && context.part <= 80
-            && Number.isInteger(context.total) && context.total >= context.part && context.total <= 80
-            && (context.strategy === "full-document" || context.strategy === "document-memory")
-            && Number.isInteger(context.documentChars) && context.documentChars > 0
-            && Number.isInteger(context.focusChars) && context.focusChars > 0
-            && Number.isInteger(context.globalContextChars) && context.globalContextChars >= 0
-            && Number.isInteger(context.retrievedContextChars) && context.retrievedContextChars >= 0
-            && Number.isInteger(context.promptChars) && context.promptChars > 0
-            && Number.isInteger(context.estimatedInputTokens) && context.estimatedInputTokens > 0
-            && typeof context.fullDocumentIncluded === "boolean"
-            && validTimelineContext
-          )
-          const validJobId = typeof candidate.id === "string" && (
-            /^resp_[a-zA-Z0-9_-]+$/.test(candidate.id)
-            || /^gemini:[a-zA-Z0-9_-]+$/.test(candidate.id)
-          )
-          return validJobId
-            && typeof candidate.targetWords === "number" && candidate.targetWords >= 10 && candidate.targetWords <= 40000
+          return typeof candidate.id === "string" && /^resp_[a-zA-Z0-9_-]+$/.test(candidate.id)
+            && typeof candidate.targetWords === "number" && candidate.targetWords >= 100 && candidate.targetWords <= 10000
             && typeof candidate.expanded === "boolean"
-            && (candidate.expansionAttempts === undefined || (Number.isInteger(candidate.expansionAttempts) && candidate.expansionAttempts >= 0 && candidate.expansionAttempts <= MAX_EXPANSION_ATTEMPTS))
             && (candidate.retries === undefined || (Number.isInteger(candidate.retries) && candidate.retries >= 0 && candidate.retries <= 1))
-            && (candidate.promptCacheKey === undefined || (typeof candidate.promptCacheKey === "string" && /^doc_[a-f0-9]{40}$/.test(candidate.promptCacheKey)))
-            && validContext
-        }).slice(0, 80)
+        }).slice(0, 20)
       : []
     const downloadName = typeof body.downloadName === "string"
       ? body.downloadName.replace(/[\r\n"/\\]/g, "").slice(0, 150)
       : "Organized Notes.docx"
     const titleName = typeof body.titleName === "string" ? body.titleName.replace(/[\r\n]/g, "").slice(0, 150) : ""
-    const duration = typeof body.duration === "string"
-      ? normalizeDurationMinutes(body.duration.replace(/[\r\n]/g, "").slice(0, 40))
-      : ""
+    const duration = typeof body.duration === "string" ? body.duration.replace(/[\r\n]/g, "").slice(0, 40) : ""
     const returnNotesHtml = body.returnNotesHtml === true
 
     if (!jobs.length) {
@@ -108,16 +68,12 @@ export async function POST(request: NextRequest) {
     const exhaustedJob = jobs.find((job, index) => (job.retries || 0) >= 1 && queuedAges[index] >= QUEUED_FAILURE_MS)
     if (exhaustedJob) {
       return NextResponse.json(
-        { error: "The AI provider kept one note section queued after an automatic retry. Please try again when provider demand is lower." },
+        { error: "OpenAI kept one note section queued after an automatic retry. Please try again when provider demand is lower." },
         { status: 504 }
       )
     }
 
-    // Do not duplicate a paid OpenAI job merely because it remains queued. Gemini's
-    // replacement path is retained, while OpenAI continues through normal polling.
-    const needsRetry = jobs.map((job, index) => job.id.startsWith("gemini:")
-      && (job.retries || 0) < 1
-      && queuedAges[index] >= QUEUED_RETRY_MS)
+    const needsRetry = jobs.map((job, index) => (job.retries || 0) < 1 && queuedAges[index] >= QUEUED_RETRY_MS)
     if (needsRetry.some(Boolean)) {
       const updatedJobs = await Promise.all(jobs.map((job, index) =>
         needsRetry[index] ? retryQueuedBackgroundNotes(job) : job
@@ -151,48 +107,9 @@ export async function POST(request: NextRequest) {
 
     const wordCounts = statuses.map((status) => (status.notes || "")
       .replace(/<[^>]+>/g, " ").replace(/&[a-z0-9#]+;/gi, " ").split(/\s+/).filter(Boolean).length)
-    const totalWords = wordCounts.reduce((sum, words) => sum + words, 0)
-    const totalTargetWords = jobs.reduce((sum, job) => sum + job.targetWords, 0)
-    const totalCompletionRatio = totalWords / Math.max(1, totalTargetWords)
-    const openAIUsage = statuses.map((status, index) => status.usage && ({
-      part: `${index + 1}/${jobs.length}`,
-      ...status.usage,
-      cacheHitRatio: Number((status.usage.cachedInputTokens / Math.max(1, status.usage.inputTokens)).toFixed(3)),
-    })).filter(Boolean)
-    console.info("AI output length validation", {
-      totalWords,
-      totalTargetWords,
-      totalCompletionRatio: Number(totalCompletionRatio.toFixed(3)),
-      sections: jobs.map((job, index) => ({
-        part: `${index + 1}/${jobs.length}`,
-        words: wordCounts[index],
-        targetWords: job.targetWords,
-        completionRatio: Number((wordCounts[index] / Math.max(1, job.targetWords)).toFixed(3)),
-        expansionAttempts: job.expansionAttempts ?? (job.expanded ? 1 : 0),
-        truncated: statuses[index].truncated || false,
-      })),
-    })
-    if (openAIUsage.length) console.info("OpenAI prompt cache usage", openAIUsage)
-
-    // Expand only the section with the largest useful deficit on each pass. This avoids
-    // paying for several revisions at once when one correction is enough to bring the
-    // whole document near its layout target. Both providers may receive up to three
-    // sequential revisions per section when measured coverage remains too low.
-    const eligibleExpansionIndexes = jobs.map((job, index) => {
-      const expansionAttempts = job.expansionAttempts ?? (job.expanded ? 1 : 0)
-      const maxAttempts = job.id.startsWith("gemini:") ? MAX_EXPANSION_ATTEMPTS : MAX_OPENAI_EXPANSION_ATTEMPTS
-      const sectionRatio = wordCounts[index] / Math.max(1, job.targetWords)
-      const needsMoreCoverage = sectionRatio < MIN_SECTION_COVERAGE_RATIO
-      return expansionAttempts < maxAttempts
-        && (statuses[index].truncated || totalCompletionRatio < MIN_TARGET_COMPLETION_RATIO || needsMoreCoverage)
-        ? index
-        : -1
-    }).filter((index) => index >= 0)
-    const expansionIndex = eligibleExpansionIndexes.sort((a, b) => {
-      if (Boolean(statuses[a].truncated) !== Boolean(statuses[b].truncated)) return statuses[a].truncated ? -1 : 1
-      return (jobs[b].targetWords - wordCounts[b]) - (jobs[a].targetWords - wordCounts[a])
-    })[0]
-    const needsExpansion = jobs.map((_, index) => index === expansionIndex)
+    // A complete draft that is close to its requested size is preferable to another full
+    // model pass. Truncated or substantially short sections still get corrected.
+    const needsExpansion = jobs.map((job, index) => !job.expanded && (statuses[index].truncated || wordCounts[index] < job.targetWords * 0.8))
     if (needsExpansion.some(Boolean)) {
       const updatedJobs = await Promise.all(jobs.map((job, index) =>
         needsExpansion[index] ? expandBackgroundNotes(job, wordCounts[index], statuses[index].truncated) : job
@@ -215,7 +132,6 @@ export async function POST(request: NextRequest) {
         status: "completed",
         notesHtml: notes,
         downloadName,
-        duration,
         progressPercent: 100,
       })
     }
@@ -227,7 +143,6 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`,
         "X-Download-Name": encodeURIComponent(downloadName),
-        "X-Document-Duration": encodeURIComponent(duration),
         "Cache-Control": "no-store",
       },
     })

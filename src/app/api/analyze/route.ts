@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { parseFile } from "@/lib/docx-parser"
 import { estimateTranscript } from "@/lib/ai-service"
-import { analyzeTranscriptTimeline, countMarkedSourcePages } from "@/lib/transcript-metadata"
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
 
 const SUPPORTED_EXTENSIONS = [".docx", ".txt"]
@@ -39,18 +38,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Could not extract text from the document." }, { status: 400 })
     }
 
-    const timeline = analyzeTranscriptTimeline(transcript)
-    return NextResponse.json({
-      ...estimateTranscript(transcript),
-      duration: timeline.durationLabel,
-      durationSeconds: timeline.durationSeconds,
-      durationMinutes: timeline.durationMinutes,
-      timestampCount: timeline.timestampCount,
-      firstTimestamp: timeline.firstTimestamp,
-      lastTimestamp: timeline.lastTimestamp,
-      maxTimestamp: timeline.maxTimestamp,
-      sourcePageCount: countMarkedSourcePages(transcript) || null,
-    })
+    return NextResponse.json(estimateTranscript(transcript))
   } catch (error) {
     console.error("Analyze error:", error)
     return NextResponse.json(

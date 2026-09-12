@@ -47,13 +47,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
   const [pages, setPages] = useState(5)
   const [titleName, setTitleName] = useState("")
   const [duration, setDuration] = useState("")
-  const [estimate, setEstimate] = useState<{
-    words: number
-    recommendedPages: number
-    duration?: string
-    durationMinutes?: number
-    timestampCount?: number
-  } | null>(null)
+  const [estimate, setEstimate] = useState<{ words: number; recommendedPages: number } | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [gdocsUrl, setGdocsUrl] = useState("")
   const [gdocsUrlError, setGdocsUrlError] = useState("")
@@ -90,9 +84,6 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
       if (response.ok && typeof data.recommendedPages === "number") {
         setEstimate(data)
         setPages(data.recommendedPages)
-        if (typeof data.durationMinutes === "number" && data.durationMinutes > 0) {
-          setDuration(String(data.durationMinutes))
-        }
       }
     } catch {
       // A failed estimate is not worth interrupting the user for; the manual page input still works.
@@ -157,22 +148,17 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
       const job = await response.json()
       if (!response.ok) throw new Error(job.error || "Failed to start note generation.")
 
-      let jobs: Array<{ id: string; targetWords: number; expanded: boolean; expansionAttempts?: number; retries?: number; promptCacheKey?: string }> = job.jobs
+      let jobs: Array<{ id: string; targetWords: number; expanded: boolean; retries?: number }> = job.jobs
       const downloadName: string = job.downloadName || "Organized Notes.docx"
       const pageCount: number = job.pageCount || pages
       const resolvedTitleName: string = job.titleName ?? titleName
       const resolvedDuration: string = job.duration ?? duration
       const startedAt = Date.now()
-      // Long documents can legitimately need more than the old fixed 15-minute
-      // polling window even though their background jobs remain healthy. Scale the
-      // wait with the requested output size, bounded to one hour.
-      const maxWaitMinutes = Math.min(60, Math.max(20, Math.ceil(pageCount * 1.25)))
-      const maxWaitMs = maxWaitMinutes * 60 * 1000
       let consecutivePollFailures = 0
       let pollDelay = 750
       onProgress({ completed: 0, total: jobs.length, progressPercent: 0 })
 
-      while (Date.now() - startedAt < maxWaitMs) {
+      while (Date.now() - startedAt < 15 * 60 * 1000) {
         await new Promise((resolve) => window.setTimeout(resolve, pollDelay))
         pollDelay = 2000
         try {
@@ -243,7 +229,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
         }
       }
 
-      throw new Error(`Generation took longer than ${maxWaitMinutes} minutes. The background jobs did not finish in time; please try again.`)
+      throw new Error("Generation took longer than 15 minutes. Please try again with fewer pages or a shorter transcript.")
     } catch (error) {
       onError(error instanceof Error ? error.message : "An unexpected error occurred.")
     } finally {
@@ -387,24 +373,17 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
               />
             </div>
             <div>
-              <label htmlFor="duration" className="mb-1.5 block text-xs font-medium text-muted-foreground">Duration in minutes</label>
+              <label htmlFor="duration" className="mb-1.5 block text-xs font-medium text-muted-foreground">Duration (minutes)</label>
               <Input
                 id="duration"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                step={1}
-                placeholder="e.g. 90 or 120"
+                type="text"
+                inputMode="decimal"
+                placeholder="e.g. 82.55"
                 value={duration}
-                onChange={(event) => setDuration(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                onChange={(event) => setDuration(event.target.value.slice(0, 40))}
                 className="h-12 rounded-xl text-sm"
                 aria-label="Class duration in minutes"
               />
-              {estimate?.duration && (
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  Detected from {estimate.timestampCount?.toLocaleString() || 0} timestamps across the complete extracted document.
-                </p>
-              )}
             </div>
           </div>
         </div>

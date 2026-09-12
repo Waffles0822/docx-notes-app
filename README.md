@@ -16,65 +16,6 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-Create `.env.local` with an OpenAI API key before processing documents. The defaults
-use GPT-5.6 Luna with reasoning disabled. Luna is the lowest-cost current OpenAI model
-in this project with a 1.05-million-token context window:
-
-```bash
-AI_PROVIDER=openai
-OPENAI_API_KEY=your_openai_api_key_here
-# Optional overrides
-OPENAI_MODEL=gpt-5.6-luna
-OPENAI_REASONING_EFFORT=none
-```
-
-Gemini remains available by setting `AI_PROVIDER=gemini` and adding `GEMINI_API_KEY`.
-
-### Document context diagnostics
-
-Every background section logs a safe context manifest containing the section number,
-context strategy, source/focus/reference character counts, and estimated input tokens.
-The same manifest is returned with each generation job and attached to the AI
-provider request where supported.
-
-Multi-section OpenAI runs place the stable document reference before each changing
-focus section. GPT-5.6 Luna uses an explicit 30-minute prompt-cache breakpoint so
-later sections can reuse the stable document context. Completion logs include input,
-cache-write, cached-input, output, and total token counts so cache effectiveness can
-be verified without logging document contents.
-
-GPT-5 nano remains available as an optional override for smaller documents, but its
-context window and entry-tier token rate limit are lower than Luna's.
-
-Generated DOCX and Google Docs output uses Verdana at 12 points throughout. A
-first-level bullet with supporting children is a short three-to-six-word topic label,
-while a standalone first-level fact remains a complete sentence. Supporting bullets
-target one line without cutting a sentence into separate bullet fragments.
-
-Requested output length is planned at approximately 300 generated words per Verdana
-12-point page. Sections that remain materially below their assigned share are revised
-sequentially up to three times, while source-supported content limits still prevent
-padding or invented information.
-
-Duration is entered as whole minutes, such as `90`, `120`, or `150`. Transcript
-timestamps are converted to whole minutes automatically, and exported documents show
-the normalized value with the `mins` suffix, such as `150 mins`.
-
-To log the exact model input for every section while debugging locally, add:
-
-```bash
-AI_CONTEXT_DEBUG=full
-```
-
-Exact inputs can contain the complete uploaded document. Do not enable full context
-logging in production or anywhere logs are retained or shared.
-
-DOCX manual page breaks and Word-saved rendered page breaks are preserved as strict
-`SOURCE PAGE` boundaries. Form-feed characters provide the equivalent boundary in
-plain-text uploads. Each detected source page receives its own processing job (up to
-the 80-page application limit), while wider document context is used only for wording
-and terminology consistency—not as a source of page-local facts.
-
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

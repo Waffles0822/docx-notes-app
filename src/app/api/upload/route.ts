@@ -2,11 +2,10 @@ import { NextRequest, NextResponse } from "next/server"
 import { parseFile } from "@/lib/docx-parser"
 import { startBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
-import { analyzeTranscriptTimeline, countMarkedSourcePages, normalizeDurationMinutes } from "@/lib/transcript-metadata"
 
 const SUPPORTED_EXTENSIONS = [".docx", ".txt"]
 
-// Parsing the document and handing chunks to the selected AI provider can take up to a minute, which
+// Parsing the document and handing chunks to OpenAI can take up to a minute, which
 // exceeds the platform's short default function timeout.
 export const maxDuration = 60
 // mammoth and docx rely on Node APIs such as Buffer, so the edge runtime is unusable.
@@ -24,11 +23,7 @@ export async function POST(request: NextRequest) {
     const pagesStr = formData.get("pages") as string | null
     const pages = Math.min(Math.max(parseInt(pagesStr || "1", 10) || 1, 1), 80)
     const titleName = ((formData.get("titleName") as string | null) || "").trim().slice(0, 150)
-    const submittedDuration = ((formData.get("duration") as string | null) || "").trim().slice(0, 40)
-    const normalizedSubmittedDuration = normalizeDurationMinutes(submittedDuration)
-    if (submittedDuration && !normalizedSubmittedDuration) {
-      return NextResponse.json({ error: "Duration must be entered as whole minutes, such as 90 or 120." }, { status: 400 })
-    }
+    const duration = ((formData.get("duration") as string | null) || "").trim().slice(0, 40)
 
     if (!file) {
       return NextResponse.json(
@@ -63,30 +58,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const timeline = analyzeTranscriptTimeline(transcript)
-    // The detected timeline supplies the default shown by the client. If the user
-    // replaces it with a minute value, that explicit value controls the document.
-    const duration = normalizedSubmittedDuration || timeline.durationLabel
-    const extractedWords = transcript
-      .replace(/<<<SOURCE PAGE \d+ (?:START|END)>>>/g, " ")
-      .split(/\s+/)
-      .filter(Boolean).length
-    console.info("Uploaded document coverage", {
-      fileName: file.name,
-      extractedCharacters: transcript.length,
-      extractedWords,
-      encodedSourcePages: countMarkedSourcePages(transcript) || "not encoded in DOCX",
-      requestedOutputPages: pages,
-      timestampCount: timeline.timestampCount,
-      firstTimestamp: timeline.firstTimestamp,
-      lastTimestamp: timeline.lastTimestamp,
-      maxTimestamp: timeline.maxTimestamp,
-      detectedDuration: timeline.durationLabel || "not detected",
-      durationSeconds: timeline.durationSeconds,
-      durationMinutes: normalizedSubmittedDuration ? Number.parseInt(normalizedSubmittedDuration, 10) : timeline.durationMinutes,
-      durationSource: normalizedSubmittedDuration ? "manual entry" : timeline.durationLabel ? "document timestamps" : "not supplied",
-    })
-
     let jobs: BackgroundNoteJob[]
     try {
       jobs = await startBackgroundNotes(transcript, pages)
@@ -98,7 +69,7 @@ export async function POST(request: NextRequest) {
           error: message,
         },
         {
-          status: message.includes("OpenAI") || message.includes("Gemini") || message === "fetch failed" ? 503 : 500,
+          status: message.includes("OpenAI") || message === "fetch failed" ? 503 : 500,
         }
       )
     }
@@ -113,18 +84,6 @@ export async function POST(request: NextRequest) {
       totalSections: jobs.length,
       titleName,
       duration,
-      sourceAnalysis: {
-        extractedCharacters: transcript.length,
-        extractedWords,
-        encodedSourcePages: countMarkedSourcePages(transcript) || null,
-        timestampCount: timeline.timestampCount,
-        firstTimestamp: timeline.firstTimestamp,
-        lastTimestamp: timeline.lastTimestamp,
-        maxTimestamp: timeline.maxTimestamp,
-        durationSeconds: timeline.durationSeconds,
-        durationMinutes: timeline.durationMinutes,
-        duration: timeline.durationLabel,
-      },
     })
   } catch (error: unknown) {
     console.error("Upload error:", error)

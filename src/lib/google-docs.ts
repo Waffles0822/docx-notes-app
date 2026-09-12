@@ -1,8 +1,7 @@
 import { google, docs_v1 } from "googleapis"
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
-import { parseNotes, sanitizeNotePunctuation, type Bullet, type SubSection } from "./docx-generator"
+import { parseNotes, type Bullet, type SubSection } from "./docx-generator"
 import { normalizeMathInProse } from "./math-format"
-import { normalizeDurationMinutes } from "./transcript-metadata"
 
 export interface GoogleTokens {
   access_token: string
@@ -171,7 +170,7 @@ function flattenBullets(bullets: Bullet[], level = 0): GoogleDocParagraph[] {
       text: normalizeMathInProse(bullet.text),
       kind: "bullet" as const,
       level,
-      bold: false,
+      bold: level === 0 && bullet.children.length > 0,
     },
     ...flattenBullets(bullet.children, Math.min(level + 1, 3)),
   ])
@@ -191,12 +190,10 @@ function buildGroup(label: string, sections: SubSection[]): GoogleDocParagraph[]
 function buildParagraphs(notesHtml: string, title: string, duration: string): GoogleDocParagraph[] {
   const { announcements, lecture } = parseNotes(notesHtml)
   return [
-    { text: `Title Name — ${normalizeMathInProse(sanitizeNotePunctuation(title.trim() || "Untitled Class"))}`, kind: "meta" },
-    { text: `Duration — ${normalizeDurationMinutes(duration) || "N/A"}`, kind: "meta" },
-    // Inserted through the Docs text API, so the feedback row and the content that
-    // follows it remain normal selectable, copy-pastable document text.
+    { text: `Title Name : ${normalizeMathInProse(title.trim() || "Untitled Class")}`, kind: "meta" },
+    { text: `Duration: ${duration.trim() || "N/A"}`, kind: "meta" },
     { text: "Click here to provide feedback", kind: "feedback" },
-    ...buildGroup("ANNOUNCEMENT", announcements),
+    ...buildGroup("ANNOUNCEMENTS", announcements),
     ...buildGroup("LECTURE", lecture),
   ]
 }
@@ -237,15 +234,15 @@ function buildDocRequests(notesHtml: string, title: string, duration: string, en
   requests.push({
     updateTextStyle: {
       range: { startIndex: 1, endIndex: 1 + textContent.length },
-      textStyle: { weightedFontFamily: { fontFamily: "Verdana" }, fontSize: pt(12) },
+      textStyle: { weightedFontFamily: { fontFamily: "Arial" }, fontSize: pt(11) },
       fields: "weightedFontFamily,fontSize",
     },
   })
   requests.push({
     updateParagraphStyle: {
       range: { startIndex: 1, endIndex: 1 + textContent.length },
-      paragraphStyle: { alignment: "START", direction: "LEFT_TO_RIGHT", lineSpacing: 108, spaceBelow: pt(1) },
-      fields: "alignment,direction,lineSpacing,spaceBelow",
+      paragraphStyle: { lineSpacing: 108, spaceBelow: pt(1) },
+      fields: "lineSpacing,spaceBelow",
     },
   })
 
@@ -349,16 +346,6 @@ export async function writeNotesToGoogleDoc(
   const content = document.data.body?.content || []
   const endIndex = content.at(-1)?.endIndex || 1
   const requests = buildDocRequests(notesHtml, title, duration, endIndex)
-  const generatedWords = notesHtml
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&[a-z0-9#]+;/gi, " ")
-    .split(/\s+/)
-    .filter(Boolean).length
-  console.info("Google Docs output layout", {
-    generatedWords,
-    estimatedPagesAt300Words: Number((generatedWords / 300).toFixed(1)),
-    formatting: "Verdana 12pt, 108% line spacing, concise complete bullets",
-  })
 
   await docs.documents.batchUpdate({
     documentId: docId,
