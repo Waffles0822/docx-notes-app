@@ -15,7 +15,9 @@ export const runtime = "nodejs"
 const QUEUED_RETRY_MS = 3 * 60 * 1000
 const QUEUED_FAILURE_MS = 5 * 60 * 1000
 const MAX_EXPANSION_ATTEMPTS = 3
-const MIN_TARGET_COMPLETION_RATIO = 0.9
+const MAX_OPENAI_EXPANSION_ATTEMPTS = 1
+const MIN_TARGET_COMPLETION_RATIO = 0.88
+const MIN_SECTION_COVERAGE_RATIO = 0.6
 
 function getJobProgress(status: string, truncated: boolean): number {
   if (status === "completed") return 100
@@ -62,6 +64,7 @@ export async function POST(request: NextRequest) {
             && typeof candidate.expanded === "boolean"
             && (candidate.expansionAttempts === undefined || (Number.isInteger(candidate.expansionAttempts) && candidate.expansionAttempts >= 0 && candidate.expansionAttempts <= MAX_EXPANSION_ATTEMPTS))
             && (candidate.retries === undefined || (Number.isInteger(candidate.retries) && candidate.retries >= 0 && candidate.retries <= 1))
+            && (candidate.promptCacheKey === undefined || (typeof candidate.promptCacheKey === "string" && /^doc_[a-f0-9]{40}$/.test(candidate.promptCacheKey)))
             && validContext
         }).slice(0, 80)
       : []
@@ -103,7 +106,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const needsRetry = jobs.map((job, index) => (job.retries || 0) < 1 && queuedAges[index] >= QUEUED_RETRY_MS)
+    // Do not duplicate a paid OpenAI job merely because it remains queued. Gemini's
+    // replacement path is retained, while OpenAI continues through normal polling.
+    const needsRetry = jobs.map((job, index) => job.id.startsWith("gemini:")
+      && (job.retries || 0) < 1
+      && queuedAges[index] >= QUEUED_RETRY_MS)
     if (needsRetry.some(Boolean)) {
       const updatedJobs = await Promise.all(jobs.map((job, index) =>
         needsRetry[index] ? retryQueuedBackgroundNotes(job) : job
@@ -137,7 +144,18 @@ export async function POST(request: NextRequest) {
 
     const wordCounts = statuses.map((status) => (status.notes || "")
       .replace(/<[^>]+>/g, " ").replace(/&[a-z0-9#]+;/gi, " ").split(/\s+/).filter(Boolean).length)
+    const totalWords = wordCounts.reduce((sum, words) => sum + words, 0)
+    const totalTargetWords = jobs.reduce((sum, job) => sum + job.targetWords, 0)
+    const totalCompletionRatio = totalWords / Math.max(1, totalTargetWords)
+    const openAIUsage = statuses.map((status, index) => status.usage && ({
+      part: `${index + 1}/${jobs.length}`,
+      ...status.usage,
+      cacheHitRatio: Number((status.usage.cachedInputTokens / Math.max(1, status.usage.inputTokens)).toFixed(3)),
+    })).filter(Boolean)
     console.info("AI output length validation", {
+      totalWords,
+      totalTargetWords,
+      totalCompletionRatio: Number(totalCompletionRatio.toFixed(3)),
       sections: jobs.map((job, index) => ({
         part: `${index + 1}/${jobs.length}`,
         words: wordCounts[index],
@@ -147,15 +165,27 @@ export async function POST(request: NextRequest) {
         truncated: statuses[index].truncated || false,
       })),
     })
-    // Gemini and other providers can remain short after one revision. Keep correcting
-    // while the result is materially below its supported layout target, but cap the
-    // attempts so sparse source material can never cause an endless loop.
-    const needsExpansion = jobs.map((job, index) => {
+    if (openAIUsage.length) console.info("OpenAI prompt cache usage", openAIUsage)
+
+    // Expand only the section with the largest useful deficit on each pass. This avoids
+    // paying for several revisions at once when one correction is enough to bring the
+    // whole document near its layout target. OpenAI gets one revision per section;
+    // Gemini keeps the larger legacy cap because its free-tier behavior differs.
+    const eligibleExpansionIndexes = jobs.map((job, index) => {
       const expansionAttempts = job.expansionAttempts ?? (job.expanded ? 1 : 0)
-      return expansionAttempts < MAX_EXPANSION_ATTEMPTS && (
-        statuses[index].truncated || wordCounts[index] < job.targetWords * MIN_TARGET_COMPLETION_RATIO
-      )
-    })
+      const maxAttempts = job.id.startsWith("gemini:") ? MAX_EXPANSION_ATTEMPTS : MAX_OPENAI_EXPANSION_ATTEMPTS
+      const sectionRatio = wordCounts[index] / Math.max(1, job.targetWords)
+      const needsMoreCoverage = sectionRatio < MIN_SECTION_COVERAGE_RATIO
+      return expansionAttempts < maxAttempts
+        && (statuses[index].truncated || totalCompletionRatio < MIN_TARGET_COMPLETION_RATIO || needsMoreCoverage)
+        ? index
+        : -1
+    }).filter((index) => index >= 0)
+    const expansionIndex = eligibleExpansionIndexes.sort((a, b) => {
+      if (Boolean(statuses[a].truncated) !== Boolean(statuses[b].truncated)) return statuses[a].truncated ? -1 : 1
+      return (jobs[b].targetWords - wordCounts[b]) - (jobs[a].targetWords - wordCounts[a])
+    })[0]
+    const needsExpansion = jobs.map((_, index) => index === expansionIndex)
     if (needsExpansion.some(Boolean)) {
       const updatedJobs = await Promise.all(jobs.map((job, index) =>
         needsExpansion[index] ? expandBackgroundNotes(job, wordCounts[index], statuses[index].truncated) : job

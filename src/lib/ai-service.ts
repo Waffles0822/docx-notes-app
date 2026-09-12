@@ -1,5 +1,6 @@
 import { analyzeTranscriptTimeline, type TranscriptTimeline } from "@/lib/transcript-metadata"
 import { GoogleGenAI, ThinkingLevel } from "@google/genai"
+import { createHash } from "node:crypto"
 
 const SYSTEM_PROMPT = `Create complete, organized, context-aware notes from the class transcript below.
 
@@ -347,6 +348,15 @@ type BackgroundNoteStatus = {
   error?: string
   truncated?: boolean
   createdAt?: number
+  usage?: OpenAIUsage
+}
+
+type OpenAIUsage = {
+  inputTokens: number
+  cachedInputTokens: number
+  cacheWriteTokens: number
+  outputTokens: number
+  totalTokens: number
 }
 
 export type BackgroundNoteJob = {
@@ -355,6 +365,7 @@ export type BackgroundNoteJob = {
   expanded: boolean
   expansionAttempts?: number
   retries?: number
+  promptCacheKey?: string
   context?: BackgroundContextManifest
 }
 
@@ -400,19 +411,34 @@ type DocumentContext = {
 // and output inside the model context window. Very large inputs can enter long-context
 // pricing; beyond this bound they use deterministic global memory plus retrieval rather
 // than silently losing the middle.
-const FULL_DOCUMENT_CONTEXT_MAX_CHARS = 1500000
+const FULL_DOCUMENT_CONTEXT_MAX_CHARS = 700000
 const MAX_FOCUS_CHARS = 220000
-const MAX_DOCUMENT_MEMORY_CHARS = 140000
-const MAX_RETRIEVED_CONTEXT_CHARS = 80000
-const MAX_PREVIOUS_CONTEXT_CHARS = 500000
+const MAX_DOCUMENT_MEMORY_CHARS = 100000
+const MAX_RETRIEVED_CONTEXT_CHARS = 40000
+const MAX_PREVIOUS_CONTEXT_CHARS = 200000
 const MAX_BACKGROUND_JOBS = 80
 const MAX_TRANSCRIPT_UNIT_CHARS = 12000
 // Long single responses tend to stop well below a requested multi-page length even
 // when ample output tokens remain. Use several moderate sections for long outputs;
 // each receives document-wide and cumulative context from buildBackgroundInput.
-const MAX_TARGET_WORDS_PER_JOB = 2500
+const MAX_TARGET_WORDS_PER_JOB = 3000
 const GEMINI_JOB_PREFIX = "gemini:"
 const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+const DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
+
+function getOpenAIModel(): string {
+  const configured = process.env.OPENAI_MODEL?.trim()
+  return configured && configured.toLowerCase() !== "default"
+    ? configured
+    : DEFAULT_OPENAI_MODEL
+}
+
+function getOpenAIReasoningEffort(): string {
+  const configured = process.env.OPENAI_REASONING_EFFORT?.trim().toLowerCase()
+  return configured && ["none", "low", "medium", "high", "xhigh", "max"].includes(configured)
+    ? configured
+    : "none"
+}
 
 function getOpenAIKey(): string {
   const apiKey = process.env.OPENAI_API_KEY
@@ -544,6 +570,18 @@ function buildDocumentContext(transcript: string): DocumentContext {
   ].join("\n")
 
   return { source, units, memory: memory.slice(0, MAX_DOCUMENT_MEMORY_CHARS), useFullDocument: false, timeline }
+}
+
+function buildPromptCacheKey(context: DocumentContext): string {
+  const sharedReference = context.useFullDocument ? context.source : context.memory
+  const digest = createHash("sha256")
+    .update("document-notes-v2\0")
+    .update(SYSTEM_PROMPT)
+    .update("\0")
+    .update(sharedReference)
+    .digest("hex")
+    .slice(0, 40)
+  return `doc_${digest}`
 }
 
 function getGeminiKey(): string {
@@ -689,7 +727,7 @@ function buildBackgroundInput(
   part: number,
   total: number,
   targetWords: number
-): { input: string; manifest: BackgroundContextManifest } {
+): { input: string; openAIInput: unknown; cacheablePrefix: boolean; manifest: BackgroundContextManifest } {
   // Chunk count is size-driven, so every source character remains in exactly one
   // focus section. Never compact a focus section; doing so would silently discard
   // material that no other output section owns.
@@ -711,8 +749,23 @@ function buildBackgroundInput(
     ? `PREVIOUS SECTIONS CONTEXT START\n${previous.text}\nPREVIOUS SECTIONS CONTEXT END`
     : ""
   const relatedBlock = related ? `\n\nRELATED PASSAGES FROM OTHER SECTIONS START\n${related}\nRELATED PASSAGES FROM OTHER SECTIONS END` : ""
-  const contextBlocks = [globalContext, previousBlock, relatedBlock.trim()].filter(Boolean).join("\n\n")
-  const input = `${contextBlocks ? `${contextBlocks}\n\n` : ""}FOCUS SECTION ${part} START\n${focus}\nFOCUS SECTION ${part} END\n\n${referenceInstruction}\nCorrect obvious grammar and sentence-boundary errors while preserving the source meaning. Do not invent missing details. Keep wording, entity names, capitalization, and terminology consistent with the document-wide reference. Aim closely for ${Math.floor(targetWords * 0.92)} to ${Math.ceil(targetWords * 1.06)} words by retaining and fully explaining the meaningful ideas supported by the focus section. Do not aggressively summarize or compress. Preserve definitions, instructions, conditions, examples, supporting explanations, distinctions, and connections needed for understanding. Include only useful information and omit genuinely vague or unnecessary notes rather than using them to fill space. Never interpret an isolated statement such as This is the last class without explicit meaningful context. Consolidate repeated sentence frames, including repeated wording such as The disclosure should show, only when every meaningful difference remains. Do not use <strong> or <b> inside bullets. Do not use colons or semicolons in visible note text unless the focus material is specifically about programming or coding and the punctuation is meaningful to code or technical syntax. Before returning HTML, verify that no useful source detail was removed for brevity, relevant earlier context was considered, Reminder is the only announcement sub-header, all announcement content is nested beneath it, sentence openings are not repetitive, every fact remains owned by its source page, no bullet is bold, no prohibited colon or semicolon is visible, and no unsupported detail was added.`
+  const dynamicContext = [previousBlock, relatedBlock.trim()].filter(Boolean).join("\n\n")
+  const dynamicInput = `${dynamicContext ? `${dynamicContext}\n\n` : ""}FOCUS SECTION ${part} START\n${focus}\nFOCUS SECTION ${part} END\n\n${referenceInstruction}\nCorrect obvious grammar and sentence-boundary errors while preserving the source meaning. Do not invent missing details. Keep wording, entity names, capitalization, and terminology consistent with the document-wide reference. Aim closely for ${Math.floor(targetWords * 0.92)} to ${Math.ceil(targetWords * 1.06)} words by retaining and fully explaining the meaningful ideas supported by the focus section. Do not aggressively summarize or compress. Preserve definitions, instructions, conditions, examples, supporting explanations, distinctions, and connections needed for understanding. Include only useful information and omit genuinely vague or unnecessary notes rather than using them to fill space. Never interpret an isolated statement such as This is the last class without explicit meaningful context. Consolidate repeated sentence frames, including repeated wording such as The disclosure should show, only when every meaningful difference remains. Do not use <strong> or <b> inside bullets. Do not use colons or semicolons in visible note text unless the focus material is specifically about programming or coding and the punctuation is meaningful to code or technical syntax. Before returning HTML, verify that no useful source detail was removed for brevity, relevant earlier context was considered, Reminder is the only announcement sub-header, all announcement content is nested beneath it, sentence openings are not repetitive, every fact remains owned by its source page, no bullet is bold, no prohibited colon or semicolon is visible, and no unsupported detail was added.`
+  const input = `${globalContext ? `${globalContext}\n\n` : ""}${dynamicInput}`
+  const cacheablePrefix = Boolean(globalContext && Math.ceil((SYSTEM_PROMPT.length + globalContext.length) / 3.6) >= 1024)
+  const openAIInput = cacheablePrefix
+    ? [
+        {
+          role: "developer",
+          content: [{
+            type: "input_text",
+            text: globalContext,
+            prompt_cache_breakpoint: { mode: "explicit" },
+          }],
+        },
+        { role: "user", content: dynamicInput },
+      ]
+    : input
   const promptChars = SYSTEM_PROMPT.length + input.length
   const manifest: BackgroundContextManifest = {
     part,
@@ -736,7 +789,7 @@ function buildBackgroundInput(
     previousContextStrategy: previous.strategy,
   }
   debugModelContext(manifest, input)
-  return { input, manifest }
+  return { input, openAIInput, cacheablePrefix, manifest }
 }
 
 // HTML markup (nested <ul>/<li> tags) and hidden reasoning tokens both eat into
@@ -749,23 +802,27 @@ function computeMaxOutputTokens(targetWords: number): number {
 
 async function submitBackgroundChunk(
   apiKey: string,
-  input: string,
+  input: unknown,
   targetWords: number,
-  manifest: BackgroundContextManifest
+  manifest: BackgroundContextManifest,
+  promptCacheKey?: string,
+  cacheablePrefix = false
 ): Promise<string> {
   let lastError = "OpenAI did not accept the background request"
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-        model: process.env.OPENAI_MODEL || "gpt-5.6-terra",
+        model: getOpenAIModel(),
         instructions: SYSTEM_PROMPT,
         input,
         text: { verbosity: "medium" },
-        reasoning: { effort: "low" },
+        reasoning: { effort: getOpenAIReasoningEffort() },
         max_output_tokens: computeMaxOutputTokens(targetWords),
         background: true,
         truncation: "disabled",
+        prompt_cache_key: cacheablePrefix ? promptCacheKey : undefined,
+        prompt_cache_options: { mode: "explicit", ttl: "30m" },
         metadata: {
           context_strategy: manifest.strategy,
           document_chars: String(manifest.documentChars),
@@ -790,6 +847,26 @@ async function submitBackgroundChunk(
   }
 
   throw new Error(lastError)
+}
+
+async function waitForOpenAICacheWarm(id: string, apiKey: string): Promise<void> {
+  // A simultaneous fan-out can make every request pay a cache write before the first
+  // prefix is available. Wait briefly for the first background response to leave the
+  // queue, then submit the remaining sections against the warmed document prefix.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      const { response, data } = await getOpenAIJson(
+        `https://api.openai.com/v1/responses/${encodeURIComponent(id)}`,
+        apiKey,
+        10000
+      )
+      if (response.ok && data.status && data.status !== "queued") return
+    } catch {
+      // Cache warming is an optimization. Normal status polling handles real errors.
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
 }
 
 async function submitGeminiChunk(
@@ -824,6 +901,7 @@ export async function startBackgroundNotes(transcript: string, pages: number): P
   const provider = getConfiguredProvider()
   const apiKey = provider === "gemini" ? getGeminiKey() : getOpenAIKey()
   const context = buildDocumentContext(transcript)
+  const promptCacheKey = buildPromptCacheKey(context)
   const totalSourceWords = countTranscriptWords(context.source)
   const requestedTargetWords = pages * WORDS_PER_PAGE
   const supportedExpansionCeiling = Math.max(100, Math.floor(totalSourceWords * MAX_SUPPORTED_ELABORATION_RATIO))
@@ -878,6 +956,10 @@ export async function startBackgroundNotes(transcript: string, pages: number): P
     coveredSourceWords,
     coverageComplete,
     provider,
+    model: provider === "openai" ? getOpenAIModel() : process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
+    promptCaching: provider === "openai" && prepared.some(({ cacheablePrefix }) => cacheablePrefix)
+      ? "explicit stable document prefix"
+      : "not applicable",
     sections: prepared.map(({ chunk, manifest }, index) => {
       const timeline = analyzeTranscriptTimeline(chunk.text)
       return {
@@ -893,12 +975,33 @@ export async function startBackgroundNotes(transcript: string, pages: number): P
     }),
   })
 
-  return Promise.all(prepared.map(async ({ input, targetWords, manifest }) => {
+  const startPreparedJob = async ({
+    input,
+    openAIInput,
+    cacheablePrefix,
+    targetWords,
+    manifest,
+  }: (typeof prepared)[number]): Promise<BackgroundNoteJob> => {
     const id = provider === "gemini"
       ? await submitGeminiChunk(apiKey, input, targetWords)
-      : await submitBackgroundChunk(apiKey, input, targetWords, manifest)
-    return { id, targetWords, expanded: false, expansionAttempts: 0, retries: 0, context: manifest }
-  }))
+      : await submitBackgroundChunk(apiKey, openAIInput, targetWords, manifest, promptCacheKey, cacheablePrefix)
+    return {
+      id,
+      targetWords,
+      expanded: false,
+      expansionAttempts: 0,
+      retries: 0,
+      promptCacheKey: provider === "openai" && cacheablePrefix ? promptCacheKey : undefined,
+      context: manifest,
+    }
+  }
+
+  if (provider !== "openai" || prepared.length <= 1) return Promise.all(prepared.map(startPreparedJob))
+
+  const firstJob = await startPreparedJob(prepared[0])
+  if (prepared[0].cacheablePrefix) await waitForOpenAICacheWarm(firstJob.id, apiKey)
+  const remainingJobs = await Promise.all(prepared.slice(1).map(startPreparedJob))
+  return [firstJob, ...remainingJobs]
 }
 
 export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promise<BackgroundNoteJob> {
@@ -930,14 +1033,16 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
   }
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-    model: source.data.model || process.env.OPENAI_MODEL || "gpt-5.6-terra",
+    model: source.data.model || getOpenAIModel(),
     instructions: source.data.instructions || SYSTEM_PROMPT,
     input: source.data.input,
     text: { verbosity: "medium" },
-    reasoning: { effort: "low" },
+    reasoning: { effort: getOpenAIReasoningEffort() },
     max_output_tokens: source.data.max_output_tokens || computeMaxOutputTokens(job.targetWords),
     background: true,
     truncation: "disabled",
+    prompt_cache_key: source.data.prompt_cache_key || job.promptCacheKey,
+    prompt_cache_options: source.data.prompt_cache_options || { mode: "explicit", ttl: "30m" },
     metadata: source.data.metadata || (job.context ? {
       context_strategy: job.context.strategy,
       document_chars: String(job.context.documentChars),
@@ -989,15 +1094,17 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
   }
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
-    model: process.env.OPENAI_MODEL || "gpt-5.6-terra",
+    model: getOpenAIModel(),
     previous_response_id: job.id,
     instructions: SYSTEM_PROMPT,
     input,
     text: { verbosity: "medium" },
-    reasoning: { effort: "low" },
+    reasoning: { effort: getOpenAIReasoningEffort() },
     max_output_tokens: computeMaxOutputTokens(job.targetWords * (wasTruncated ? 1.5 : 1)),
     background: true,
     truncation: "disabled",
+    prompt_cache_key: job.promptCacheKey,
+    prompt_cache_options: job.promptCacheKey ? { mode: "implicit", ttl: "30m" } : { mode: "explicit", ttl: "30m" },
     metadata: job.context ? {
       context_strategy: job.context.strategy,
       document_chars: String(job.context.documentChars),
@@ -1054,6 +1161,19 @@ async function getGeminiBackgroundNoteStatus(id: string): Promise<BackgroundNote
   }
 }
 
+function extractOpenAIUsage(data: ApiResponse): OpenAIUsage | undefined {
+  const usage = data.usage
+  if (!usage || typeof usage !== "object") return undefined
+  const details = usage.input_tokens_details || {}
+  return {
+    inputTokens: Number(usage.input_tokens) || 0,
+    cachedInputTokens: Number(details.cached_tokens) || 0,
+    cacheWriteTokens: Number(details.cache_write_tokens) || 0,
+    outputTokens: Number(usage.output_tokens) || 0,
+    totalTokens: Number(usage.total_tokens) || 0,
+  }
+}
+
 export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNoteStatus> {
   if (id.startsWith(GEMINI_JOB_PREFIX)) return getGeminiBackgroundNoteStatus(id)
 
@@ -1076,10 +1196,11 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
   const extractOutputText = () => data.output_text || data.output
     ?.flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content || [])
     .find((item: { type?: string }) => item.type === "output_text")?.text
+  const usage = extractOpenAIUsage(data)
 
   if (data.status === "completed") {
     try {
-      return { id, status: "completed", notes: cleanResponse(extractOutputText()), createdAt: data.created_at }
+      return { id, status: "completed", notes: cleanResponse(extractOutputText()), createdAt: data.created_at, usage }
     } catch (error) {
       return { id, status: "failed", error: error instanceof Error ? error.message : "OpenAI returned empty notes" }
     }
@@ -1090,7 +1211,7 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
     // check that already asks OpenAI to lengthen thin notes will pick this up and ask it to
     // regenerate with a larger budget, instead of surfacing a hard error to the user.
     try {
-      return { id, status: "completed", notes: cleanResponse(extractOutputText()), truncated: true, createdAt: data.created_at }
+      return { id, status: "completed", notes: cleanResponse(extractOutputText()), truncated: true, createdAt: data.created_at, usage }
     } catch {
       return { id, status: "completed", notes: "", truncated: true }
     }
@@ -1154,10 +1275,11 @@ function createOpenAIService(apiKey: string): AIService {
     async generateNotes(transcript: string, pages: number): Promise<string> {
       const source = truncateTranscript(transcript, FULL_DOCUMENT_CONTEXT_MAX_CHARS)
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-        model: process.env.OPENAI_MODEL || "gpt-5.6-terra",
+        model: getOpenAIModel(),
         instructions: SYSTEM_PROMPT,
         input: `${buildUserPrompt(source, pages)}\n\nDo not include vague bridge statements, generic classroom filler, or administrative remarks unless they carry a concrete instruction or fact.`,
         text: { verbosity: "medium" },
+        reasoning: { effort: getOpenAIReasoningEffort() },
         max_output_tokens: Math.min(64000, Math.max(4000, pages * 900)),
         store: false,
       }, 60000)

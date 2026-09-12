@@ -16,16 +16,18 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-Create `.env.local` with a Gemini API key before processing documents:
+Create `.env.local` with an OpenAI API key before processing documents. The defaults
+use the cost-focused Luna model with no reasoning tokens for this extraction workflow:
 
 ```bash
-AI_PROVIDER=gemini
-GEMINI_API_KEY=your_gemini_api_key_here
-# Optional override; the default is gemini-3.1-flash-lite
-GEMINI_MODEL=gemini-3.1-flash-lite
+AI_PROVIDER=openai
+OPENAI_API_KEY=your_openai_api_key_here
+# Optional overrides
+OPENAI_MODEL=gpt-5.6-luna
+OPENAI_REASONING_EFFORT=none
 ```
 
-To use OpenAI instead, set `AI_PROVIDER=openai` and add `OPENAI_API_KEY`.
+Gemini remains available by setting `AI_PROVIDER=gemini` and adding `GEMINI_API_KEY`.
 
 ### Document context diagnostics
 
@@ -33,6 +35,11 @@ Every background section logs a safe context manifest containing the section num
 context strategy, source/focus/reference character counts, and estimated input tokens.
 The same manifest is returned with each generation job and attached to the AI
 provider request where supported.
+
+Multi-section OpenAI runs place the stable document reference before each changing
+focus section and use an explicit 30-minute prompt-cache breakpoint. Completion logs
+include input, cache-write, cached-input, output, and total token counts so cache
+effectiveness can be verified without logging document contents.
 
 To log the exact model input for every section while debugging locally, add:
 
