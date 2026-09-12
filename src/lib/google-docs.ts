@@ -2,6 +2,7 @@ import { google, docs_v1 } from "googleapis"
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
 import { parseNotes, sanitizeNotePunctuation, type Bullet, type SubSection } from "./docx-generator"
 import { normalizeMathInProse } from "./math-format"
+import { normalizeDurationMinutes } from "./transcript-metadata"
 
 export interface GoogleTokens {
   access_token: string
@@ -191,7 +192,7 @@ function buildParagraphs(notesHtml: string, title: string, duration: string): Go
   const { announcements, lecture } = parseNotes(notesHtml)
   return [
     { text: `Title Name — ${normalizeMathInProse(sanitizeNotePunctuation(title.trim() || "Untitled Class"))}`, kind: "meta" },
-    { text: `Duration — ${sanitizeNotePunctuation(duration.trim() || "N/A")}`, kind: "meta" },
+    { text: `Duration — ${normalizeDurationMinutes(duration) || "N/A"}`, kind: "meta" },
     // Inserted through the Docs text API, so the feedback row and the content that
     // follows it remain normal selectable, copy-pastable document text.
     { text: "Click here to provide feedback", kind: "feedback" },
@@ -236,7 +237,7 @@ function buildDocRequests(notesHtml: string, title: string, duration: string, en
   requests.push({
     updateTextStyle: {
       range: { startIndex: 1, endIndex: 1 + textContent.length },
-      textStyle: { weightedFontFamily: { fontFamily: "Arial" }, fontSize: pt(11) },
+      textStyle: { weightedFontFamily: { fontFamily: "Verdana" }, fontSize: pt(12) },
       fields: "weightedFontFamily,fontSize",
     },
   })
@@ -355,8 +356,8 @@ export async function writeNotesToGoogleDoc(
     .filter(Boolean).length
   console.info("Google Docs output layout", {
     generatedWords,
-    estimatedPagesAt500Words: Number((generatedWords / 500).toFixed(1)),
-    formatting: "Arial 11pt, 108% line spacing",
+    estimatedPagesAt350Words: Number((generatedWords / 350).toFixed(1)),
+    formatting: "Verdana 12pt, 108% line spacing, one-line bullets",
   })
 
   await docs.documents.batchUpdate({

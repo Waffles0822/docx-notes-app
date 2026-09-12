@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { parseFile } from "@/lib/docx-parser"
 import { startBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
-import { analyzeTranscriptTimeline, countMarkedSourcePages } from "@/lib/transcript-metadata"
+import { analyzeTranscriptTimeline, countMarkedSourcePages, normalizeDurationMinutes } from "@/lib/transcript-metadata"
 
 const SUPPORTED_EXTENSIONS = [".docx", ".txt"]
 
@@ -25,6 +25,10 @@ export async function POST(request: NextRequest) {
     const pages = Math.min(Math.max(parseInt(pagesStr || "1", 10) || 1, 1), 80)
     const titleName = ((formData.get("titleName") as string | null) || "").trim().slice(0, 150)
     const submittedDuration = ((formData.get("duration") as string | null) || "").trim().slice(0, 40)
+    const normalizedSubmittedDuration = normalizeDurationMinutes(submittedDuration)
+    if (submittedDuration && !normalizedSubmittedDuration) {
+      return NextResponse.json({ error: "Duration must be entered as whole minutes, such as 90 or 120." }, { status: 400 })
+    }
 
     if (!file) {
       return NextResponse.json(
@@ -60,9 +64,9 @@ export async function POST(request: NextRequest) {
     }
 
     const timeline = analyzeTranscriptTimeline(transcript)
-    // A source-derived timestamp is more reliable than a manually entered partial
-    // duration. Preserve manual entry only when the document has no timestamps.
-    const duration = timeline.durationLabel || submittedDuration
+    // The detected timeline supplies the default shown by the client. If the user
+    // replaces it with a minute value, that explicit value controls the document.
+    const duration = normalizedSubmittedDuration || timeline.durationLabel
     const extractedWords = transcript
       .replace(/<<<SOURCE PAGE \d+ (?:START|END)>>>/g, " ")
       .split(/\s+/)
@@ -79,7 +83,8 @@ export async function POST(request: NextRequest) {
       maxTimestamp: timeline.maxTimestamp,
       detectedDuration: timeline.durationLabel || "not detected",
       durationSeconds: timeline.durationSeconds,
-      durationSource: timeline.durationLabel ? "document timestamps" : submittedDuration ? "manual entry" : "not supplied",
+      durationMinutes: normalizedSubmittedDuration ? Number.parseInt(normalizedSubmittedDuration, 10) : timeline.durationMinutes,
+      durationSource: normalizedSubmittedDuration ? "manual entry" : timeline.durationLabel ? "document timestamps" : "not supplied",
     })
 
     let jobs: BackgroundNoteJob[]
@@ -117,6 +122,7 @@ export async function POST(request: NextRequest) {
         lastTimestamp: timeline.lastTimestamp,
         maxTimestamp: timeline.maxTimestamp,
         durationSeconds: timeline.durationSeconds,
+        durationMinutes: timeline.durationMinutes,
         duration: timeline.durationLabel,
       },
     })

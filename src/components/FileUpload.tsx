@@ -51,6 +51,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
     words: number
     recommendedPages: number
     duration?: string
+    durationMinutes?: number
     timestampCount?: number
   } | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -89,7 +90,9 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
       if (response.ok && typeof data.recommendedPages === "number") {
         setEstimate(data)
         setPages(data.recommendedPages)
-        if (typeof data.duration === "string" && data.duration) setDuration(data.duration)
+        if (typeof data.durationMinutes === "number" && data.durationMinutes > 0) {
+          setDuration(String(data.durationMinutes))
+        }
       }
     } catch {
       // A failed estimate is not worth interrupting the user for; the manual page input still works.
@@ -384,16 +387,18 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
               />
             </div>
             <div>
-              <label htmlFor="duration" className="mb-1.5 block text-xs font-medium text-muted-foreground">Duration</label>
+              <label htmlFor="duration" className="mb-1.5 block text-xs font-medium text-muted-foreground">Duration in minutes</label>
               <Input
                 id="duration"
-                type="text"
-                inputMode="decimal"
-                placeholder="Detected from timestamps, e.g. 01:11:20"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                step={1}
+                placeholder="e.g. 90 or 120"
                 value={duration}
-                onChange={(event) => setDuration(event.target.value.slice(0, 40))}
+                onChange={(event) => setDuration(event.target.value.replace(/\D/g, "").slice(0, 5))}
                 className="h-12 rounded-xl text-sm"
-                aria-label="Class duration"
+                aria-label="Class duration in minutes"
               />
               {estimate?.duration && (
                 <p className="mt-1.5 text-xs text-muted-foreground">

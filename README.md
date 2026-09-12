@@ -17,14 +17,14 @@ bun dev
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 Create `.env.local` with an OpenAI API key before processing documents. The defaults
-use the cost-focused Luna model with no reasoning tokens for this extraction workflow:
+use GPT-5 nano with minimal reasoning for the lowest text-generation cost:
 
 ```bash
 AI_PROVIDER=openai
 OPENAI_API_KEY=your_openai_api_key_here
 # Optional overrides
-OPENAI_MODEL=gpt-5.6-luna
-OPENAI_REASONING_EFFORT=none
+OPENAI_MODEL=gpt-5-nano
+OPENAI_REASONING_EFFORT=minimal
 ```
 
 Gemini remains available by setting `AI_PROVIDER=gemini` and adding `GEMINI_API_KEY`.
@@ -37,9 +37,19 @@ The same manifest is returned with each generation job and attached to the AI
 provider request where supported.
 
 Multi-section OpenAI runs place the stable document reference before each changing
-focus section and use an explicit 30-minute prompt-cache breakpoint. Completion logs
-include input, cache-write, cached-input, output, and total token counts so cache
-effectiveness can be verified without logging document contents.
+focus section. GPT-5 nano uses its supported implicit prompt caching with a stable
+cache-routing key, while GPT-5.6 overrides use an explicit 30-minute breakpoint.
+Completion logs include input, cache-write, cached-input, output, and total token
+counts so cache effectiveness can be verified without logging document contents.
+
+Generated DOCX and Google Docs output uses Verdana at 12 points throughout. Dark
+first-level bullets are short three-to-six-word titles, with source-supported detail
+distributed across width-limited one-line nested bullets. Supporting bullets do not
+have a fixed word count.
+
+Duration is entered as whole minutes, such as `90`, `120`, or `150`. Transcript
+timestamps are converted to whole minutes automatically, and exported documents show
+the normalized value with the `mins` suffix, such as `150 mins`.
 
 To log the exact model input for every section while debugging locally, add:
 

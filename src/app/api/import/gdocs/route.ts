@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { fetchGoogleDocContent, GoogleTokens } from "@/lib/google-docs"
 import { startBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
 import { createNotesDocx } from "@/lib/docx-generator"
+import { normalizeDurationMinutes } from "@/lib/transcript-metadata"
 
 export const maxDuration = 60
 export const runtime = "nodejs"
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest) {
   const redirectTo = searchParams.get("redirectTo") || "/"
   const pagesParam = searchParams.get("pages")
   const titleName = searchParams.get("titleName") || ""
-  const duration = searchParams.get("duration") || ""
+  const duration = normalizeDurationMinutes(searchParams.get("duration") || "")
 
   if (!tokensParam || !docUrlParam) {
     const redirectUrl = new URL(`${redirectTo}?error=missing_params`, request.url)

@@ -4,6 +4,7 @@ export type TranscriptTimeline = {
   lastTimestamp: string | null
   maxTimestamp: string | null
   durationSeconds: number
+  durationMinutes: number
   durationLabel: string
 }
 
@@ -30,14 +31,27 @@ function parseTranscriptTimestamps(text: string): TimestampMatch[] {
 
 export function formatTranscriptDuration(totalSeconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds))
-  const hours = Math.floor(safeSeconds / 3600)
-  const minutes = Math.floor((safeSeconds % 3600) / 60)
-  const seconds = safeSeconds % 60
-  const paddedMinutes = String(minutes).padStart(2, "0")
-  const paddedSeconds = String(seconds).padStart(2, "0")
-  return hours > 0
-    ? `${String(hours).padStart(2, "0")}:${paddedMinutes}:${paddedSeconds}`
-    : `${paddedMinutes}:${paddedSeconds}`
+  return `${Math.ceil(safeSeconds / 60)} mins`
+}
+
+export function normalizeDurationMinutes(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+
+  const numeric = /^(\d{1,5})(?:\s*(?:m|min|mins|minute|minutes))?$/i.exec(trimmed)
+  if (numeric) {
+    const minutes = Number(numeric[1])
+    return minutes > 0 ? `${minutes} mins` : ""
+  }
+
+  // Preserve compatibility with previously saved HH:MM:SS or MM:SS values while
+  // converting them to the new whole-minute display format.
+  const timestamp = /^(?:(\d{1,3}):([0-5]\d):([0-5]\d)|(\d{1,3}):([0-5]\d))$/.exec(trimmed)
+  if (!timestamp) return ""
+  const hours = timestamp[1] === undefined ? 0 : Number(timestamp[1])
+  const minutes = Number(timestamp[1] === undefined ? timestamp[4] : timestamp[2])
+  const seconds = Number(timestamp[1] === undefined ? timestamp[5] : timestamp[3])
+  return formatTranscriptDuration(hours * 3600 + minutes * 60 + seconds)
 }
 
 export function analyzeTranscriptTimeline(text: string): TranscriptTimeline {
@@ -49,6 +63,7 @@ export function analyzeTranscriptTimeline(text: string): TranscriptTimeline {
       lastTimestamp: null,
       maxTimestamp: null,
       durationSeconds: 0,
+      durationMinutes: 0,
       durationLabel: "",
     }
   }
@@ -62,6 +77,7 @@ export function analyzeTranscriptTimeline(text: string): TranscriptTimeline {
     lastTimestamp: timestamps[timestamps.length - 1].raw,
     maxTimestamp: maximum.raw,
     durationSeconds: maximum.seconds,
+    durationMinutes: Math.ceil(maximum.seconds / 60),
     durationLabel: formatTranscriptDuration(maximum.seconds),
   }
 }

@@ -17,15 +17,18 @@ Reminder is the only permitted sub-header in the announcement group. Write it ex
 
 Use a main bullet for each reminder item. When an item includes an explanation, example, condition, date, coverage detail, format, exception, or other supporting information, place those details in nested sub-bullets under the relevant main bullet. Example:
 <ul>
-  <li>Midterm exam scheduled for March 15.
+  <li>Midterm Exam Schedule
     <ul>
-      <li>Covers Chapters 1–4.</li>
-      <li>Uses a closed-book, multiple-choice format.</li>
+      <li>Scheduled for March 15.</li>
+      <li>Covers Chapters 1 through 4.</li>
+      <li>Closed-book multiple-choice format</li>
     </ul>
   </li>
-  <li>Project proposal due February 28.
+  <li>Project Proposal Deadline
     <ul>
-      <li>Must include the research question and methodology.</li>
+      <li>Due February 28.</li>
+      <li>Include the research question.</li>
+      <li>Include the proposed methodology.</li>
     </ul>
   </li>
 </ul>
@@ -42,10 +45,13 @@ Build a deep, richly nested outline rather than a flat list. Whenever a point ca
 
 Parent bullets state the general point; their nested children carry the specifics. For example, a parent naming a regulatory body should have its individual duties nested beneath it, and a parent stating that pollutants were reduced should have each pollutant and its figure nested beneath it as separate child bullets.
 
-Write one complete, standalone idea per bullet, and do not restate the sub-header's topic inside every bullet beneath it.
+Write one specific idea per bullet, and do not restate the sub-header's topic inside every bullet beneath it.
 
 PARENT BULLET LABELS
-A first-level bullet that has bullets nested under it may be a short noun phrase naming the topic its children explain, for example Enforcement Mechanisms, Sources of Air Pollution, or Steps of the Titration Process. Keep it to roughly two to six words and push every fact, figure, and qualifier down into its children. It remains a normal plain-text bullet, not a visual header. Never use <strong> or <b> tags inside any bullet. Only actual <h3> section headers receive bold styling from the application.
+Every first-level bullet, rendered by the application as the dark bullet, must be a short noun-phrase title of three to six words. It must never be a full sentence. Examples include Enforcement Mechanisms, Sources of Air Pollution, and Titration Process Steps. Push every fact, figure, explanation, condition, and qualifier into nested sub-bullets. Even when a topic has only one supporting fact, use the short first-level title and place that fact in a child bullet. The title remains a normal plain-text bullet, not a visual header. Never use <strong> or <b> tags inside any bullet. Only actual <h3> section headers receive bold styling from the application.
+
+ONE-LINE BULLET LIMIT
+Every bullet and sub-bullet must fit on one physical line when exported in Verdana at 12 points. A first-level title must contain three to six words. Supporting bullets have no fixed word-count range. Use as many natural words as fit within one rendered line, with shorter text at deeper nesting levels because less horizontal space is available. Never allow a bullet to wrap. Split a long sentence, explanation, list, or condition into several logically ordered nested bullets instead of shortening away meaningful content. Keep the subject clear through the parent hierarchy, so child bullets can remain concise without becoming vague. Long URLs, formulas, and code tokens may remain intact only when the source requires the exact unbreakable value.
 
 NEVER REPEAT THE SAME SENTENCE OPENING, SUBJECT, OR LEAD-IN PHRASE ACROSS BULLETS. This includes repeated pronouns (e.g., "She is...", "She is...", "He said...", "He said..."), repeated nouns, or repeated verb phrases. Whenever two or more bullets under the same parent would share a phrase, lift that shared phrase out into a single bullet of its own and nest the differing parts beneath it as child bullets, so the shared wording is written once and each sub-list sits under it. When the sharing bullets are plain items that carry no supporting detail of their own, collapse them instead into one bullet that states the lead-in once and lists the items after it, comma-separated. This applies whether or not the bullets sit next to each other.
 
@@ -73,7 +79,7 @@ Write every note in the third person. Never use first-person or second-person wo
 Never mention the instructor. Do not write the instructor, the professor, the lecturer, the teacher, the speaker, or any personal name, and do not attribute a point to a person with verbs such as said, noted, stated, explained, emphasized, mentioned, discussed, or reminded. State every fact, deadline, requirement, opinion, and judgment directly on its own, so write The midterm covers the first four chapters rather than The instructor said the midterm covers the first four chapters.
 
 COMPLETENESS WITHOUT FILLER
-Use as many words as needed to make each bullet complete, specific, and understandable in context. Do not shorten a point when doing so would remove its subject, explanation, condition, example, reason, consequence, limitation, or connection to surrounding material. Cut only padding openers such as it is important to note that, it should be remembered that, the discussion covered, and this section explains. Do not echo the wording of the sub-header or parent bullet unnecessarily, but retain context needed for a child bullet to remain meaningful.
+Use as many short bullets as needed to make each topic complete, specific, and understandable in context. Do not remove a subject, explanation, condition, example, reason, consequence, limitation, or connection merely to meet the one-line limit. Move shared context into a concise parent title and distribute the details among its children. Cut only padding openers such as it is important to note that, it should be remembered that, the discussion covered, and this section explains. Do not echo the wording of the sub-header or parent bullet unnecessarily, but retain enough context for each child bullet to remain meaningful.
 
 Do not include routine classroom filler or administrative commentary unless it contains a specific instruction, deadline, concept, or assessment detail. Examples of text to omit include the instructor will answer questions during class, we will talk about this later, let us continue, and similar vague bridging lines.
 
@@ -98,22 +104,35 @@ Return HTML only, using this structure and nesting depth as the model to follow.
   <section class="announcements">
     <h3>Reminder</h3>
     <ul>
-      <li>Midterm exam scheduled for March 15 covering Chapters 1–4, multiple-choice format, closed book.</li>
-      <li>Project proposal due February 28, must include research question and methodology.</li>
-    </ul>
-    <h3>Specific Sub-Header Topic</h3>
-    <ul>
-      <li>Title Case Heading Naming This Group
+      <li>Midterm Exam Schedule
         <ul>
-          <li>Specific condition or requirement stated as a full sentence.
-            <ul>
-              <li>Individual figure, item, or qualifier</li>
-            </ul>
-          </li>
-          <li>Another specific detail supporting the same heading.</li>
+          <li>Scheduled for March 15.</li>
+          <li>Covers Chapters 1 through 4.</li>
+          <li>Closed-book multiple-choice format</li>
         </ul>
       </li>
-      <li>Standalone point with no supporting detail in the transcript.</li>
+      <li>Project Proposal Deadline
+        <ul>
+          <li>Due February 28.</li>
+          <li>Include the research question.</li>
+          <li>Include the proposed methodology.</li>
+        </ul>
+      </li>
+      <li>Additional Reminder Details
+        <ul>
+          <li>Specific supported condition.
+            <ul>
+              <li>Individual figure or qualifier</li>
+            </ul>
+          </li>
+          <li>Another supported detail.</li>
+        </ul>
+      </li>
+      <li>Standalone Source Point
+        <ul>
+          <li>Specific fact supported by the transcript.</li>
+        </ul>
+      </li>
     </ul>
   </section>
   <section class="lecture">
@@ -125,7 +144,7 @@ Return HTML only, using this structure and nesting depth as the model to follow.
           <li>Second named item</li>
         </ul>
       </li>
-      <li>Conversion to Polar Coordinates
+      <li>Polar Coordinate Conversion
         <ul>
           <li>The converted point equals <math>\\left(\\sqrt{13}, 2\\pi - \\arctan(3/2)\\right)</math>.
             <ul>
@@ -134,7 +153,11 @@ Return HTML only, using this structure and nesting depth as the model to follow.
           </li>
         </ul>
       </li>
-      <li>Standalone point stating a single fact the transcript gave no supporting detail for.</li>
+      <li>Single Supported Fact
+        <ul>
+          <li>Exact fact provided by the transcript.</li>
+        </ul>
+      </li>
     </ul>
   </section>
 </div>
@@ -147,11 +170,10 @@ export interface AIService {
 
 export const MAX_PAGES = 80
 
-// The DOCX and Google Docs exporters both use 11pt Arial, roughly single-spaced,
-// with compact spacing and nested bullets. A 500-word generation target per requested
-// page gives the layout enough material to land near the selected physical page count;
-// the final validator allows a small shortfall for headings and list spacing.
-const WORDS_PER_PAGE = 500
+// Verdana 12pt and one-line bullets fit fewer words per physical page than the former
+// Arial 11pt layout. This target accounts for the additional paragraph rows created
+// when detailed sentences are divided into short, source-faithful nested bullets.
+const WORDS_PER_PAGE = 350
 
 // Spoken transcripts carry heavy redundancy, filler, and restatement. Measured against
 // Complete notes commonly need substantially more space than a terse summary. This
@@ -382,6 +404,7 @@ export type BackgroundContextManifest = {
   fullDocumentIncluded: boolean
   documentTimestampCount?: number
   documentDurationSeconds?: number
+  documentDurationMinutes?: number
   documentDuration?: string
   focusTimestampCount?: number
   focusStartTimestamp?: string | null
@@ -424,7 +447,7 @@ const MAX_TRANSCRIPT_UNIT_CHARS = 12000
 const MAX_TARGET_WORDS_PER_JOB = 3000
 const GEMINI_JOB_PREFIX = "gemini:"
 const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
-const DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
+const DEFAULT_OPENAI_MODEL = "gpt-5-nano"
 
 function getOpenAIModel(): string {
   const configured = process.env.OPENAI_MODEL?.trim()
@@ -433,8 +456,21 @@ function getOpenAIModel(): string {
     : DEFAULT_OPENAI_MODEL
 }
 
-function getOpenAIReasoningEffort(): string {
+function supportsExplicitPromptCaching(model: string): boolean {
+  const version = /^gpt-(\d+)(?:\.(\d+))?/.exec(model.toLowerCase())
+  if (!version) return false
+  const major = Number(version[1])
+  const minor = Number(version[2] || 0)
+  return major > 5 || (major === 5 && minor >= 6)
+}
+
+function getOpenAIReasoningEffort(model = getOpenAIModel()): string {
   const configured = process.env.OPENAI_REASONING_EFFORT?.trim().toLowerCase()
+  if (model.toLowerCase().startsWith("gpt-5-nano")) {
+    return configured && ["minimal", "low", "medium", "high"].includes(configured)
+      ? configured
+      : "minimal"
+  }
   return configured && ["none", "low", "medium", "high", "xhigh", "max"].includes(configured)
     ? configured
     : "none"
@@ -750,7 +786,7 @@ function buildBackgroundInput(
     : ""
   const relatedBlock = related ? `\n\nRELATED PASSAGES FROM OTHER SECTIONS START\n${related}\nRELATED PASSAGES FROM OTHER SECTIONS END` : ""
   const dynamicContext = [previousBlock, relatedBlock.trim()].filter(Boolean).join("\n\n")
-  const dynamicInput = `${dynamicContext ? `${dynamicContext}\n\n` : ""}FOCUS SECTION ${part} START\n${focus}\nFOCUS SECTION ${part} END\n\n${referenceInstruction}\nCorrect obvious grammar and sentence-boundary errors while preserving the source meaning. Do not invent missing details. Keep wording, entity names, capitalization, and terminology consistent with the document-wide reference. Aim closely for ${Math.floor(targetWords * 0.92)} to ${Math.ceil(targetWords * 1.06)} words by retaining and fully explaining the meaningful ideas supported by the focus section. Do not aggressively summarize or compress. Preserve definitions, instructions, conditions, examples, supporting explanations, distinctions, and connections needed for understanding. Include only useful information and omit genuinely vague or unnecessary notes rather than using them to fill space. Never interpret an isolated statement such as This is the last class without explicit meaningful context. Consolidate repeated sentence frames, including repeated wording such as The disclosure should show, only when every meaningful difference remains. Do not use <strong> or <b> inside bullets. Do not use colons or semicolons in visible note text unless the focus material is specifically about programming or coding and the punctuation is meaningful to code or technical syntax. Before returning HTML, verify that no useful source detail was removed for brevity, relevant earlier context was considered, Reminder is the only announcement sub-header, all announcement content is nested beneath it, sentence openings are not repetitive, every fact remains owned by its source page, no bullet is bold, no prohibited colon or semicolon is visible, and no unsupported detail was added.`
+  const dynamicInput = `${dynamicContext ? `${dynamicContext}\n\n` : ""}FOCUS SECTION ${part} START\n${focus}\nFOCUS SECTION ${part} END\n\n${referenceInstruction}\nCorrect obvious grammar and sentence-boundary errors while preserving the source meaning. Do not invent missing details. Keep wording, entity names, capitalization, and terminology consistent with the document-wide reference. Aim closely for ${Math.floor(targetWords * 0.92)} to ${Math.ceil(targetWords * 1.06)} words by retaining and fully explaining the meaningful ideas supported by the focus section. Do not aggressively summarize or compress. Preserve definitions, instructions, conditions, examples, supporting explanations, distinctions, and connections needed for understanding. Include only useful information and omit genuinely vague or unnecessary notes rather than using them to fill space. Never interpret an isolated statement such as This is the last class without explicit meaningful context. Consolidate repeated sentence frames, including repeated wording such as The disclosure should show, only when every meaningful difference remains. Every first-level dark bullet must be a three-to-six-word title, never a sentence. Supporting bullets have no fixed word count, but each must fit one rendered Verdana 12-point line at its nesting depth. Preserve longer explanations by distributing them across additional nested bullets. Do not use <strong> or <b> inside bullets. Do not use colons or semicolons in visible note text unless the focus material is specifically about programming or coding and the punctuation is meaningful to code or technical syntax. Before returning HTML, verify that no useful source detail was removed for brevity, relevant earlier context was considered, Reminder is the only announcement sub-header, all announcement content is nested beneath it, sentence openings are not repetitive, every fact remains owned by its source page, every dark bullet is a three-to-six-word title, every bullet fits one line, no bullet is bold, no prohibited colon or semicolon is visible, and no unsupported detail was added.`
   const input = `${globalContext ? `${globalContext}\n\n` : ""}${dynamicInput}`
   const cacheablePrefix = Boolean(globalContext && Math.ceil((SYSTEM_PROMPT.length + globalContext.length) / 3.6) >= 1024)
   const openAIInput = cacheablePrefix
@@ -760,7 +796,9 @@ function buildBackgroundInput(
           content: [{
             type: "input_text",
             text: globalContext,
-            prompt_cache_breakpoint: { mode: "explicit" },
+            ...(supportsExplicitPromptCaching(getOpenAIModel())
+              ? { prompt_cache_breakpoint: { mode: "explicit" } }
+              : {}),
           }],
         },
         { role: "user", content: dynamicInput },
@@ -780,6 +818,7 @@ function buildBackgroundInput(
     fullDocumentIncluded: context.useFullDocument,
     documentTimestampCount: context.timeline.timestampCount,
     documentDurationSeconds: context.timeline.durationSeconds,
+    documentDurationMinutes: context.timeline.durationMinutes,
     documentDuration: context.timeline.durationLabel,
     focusTimestampCount: focusTimeline.timestampCount,
     focusStartTimestamp: focusTimeline.firstTimestamp,
@@ -809,20 +848,23 @@ async function submitBackgroundChunk(
   cacheablePrefix = false
 ): Promise<string> {
   let lastError = "OpenAI did not accept the background request"
+  const model = getOpenAIModel()
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-        model: getOpenAIModel(),
+        model,
         instructions: SYSTEM_PROMPT,
         input,
         text: { verbosity: "medium" },
-        reasoning: { effort: getOpenAIReasoningEffort() },
+        reasoning: { effort: getOpenAIReasoningEffort(model) },
         max_output_tokens: computeMaxOutputTokens(targetWords),
         background: true,
         truncation: "disabled",
         prompt_cache_key: cacheablePrefix ? promptCacheKey : undefined,
-        prompt_cache_options: { mode: "explicit", ttl: "30m" },
+        prompt_cache_options: supportsExplicitPromptCaching(model)
+          ? { mode: "explicit", ttl: "30m" }
+          : undefined,
         metadata: {
           context_strategy: manifest.strategy,
           document_chars: String(manifest.documentChars),
@@ -830,6 +872,7 @@ async function submitBackgroundChunk(
           section: `${manifest.part}/${manifest.total}`,
           estimated_input_tokens: String(manifest.estimatedInputTokens),
           document_duration: manifest.documentDuration || "not-detected",
+          document_duration_minutes: String(manifest.documentDurationMinutes || 0),
           document_timestamp_count: String(manifest.documentTimestampCount || 0),
           focus_time_range: `${manifest.focusStartTimestamp || "none"}-${manifest.focusEndTimestamp || "none"}`,
           previous_context_strategy: manifest.previousContextStrategy || "none",
@@ -948,6 +991,7 @@ export async function startBackgroundNotes(transcript: string, pages: number): P
     documentMaxTimestamp: context.timeline.maxTimestamp,
     documentDuration: context.timeline.durationLabel || "not detected",
     documentDurationSeconds: context.timeline.durationSeconds,
+    documentDurationMinutes: context.timeline.durationMinutes,
     sectionCount: chunks.length,
     chunking: chunks.length === 1 ? "single continuous document" : "size/output constrained with cumulative context",
     sizeDrivenChunks,
@@ -958,7 +1002,9 @@ export async function startBackgroundNotes(transcript: string, pages: number): P
     provider,
     model: provider === "openai" ? getOpenAIModel() : process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL,
     promptCaching: provider === "openai" && prepared.some(({ cacheablePrefix }) => cacheablePrefix)
-      ? "explicit stable document prefix"
+      ? supportsExplicitPromptCaching(getOpenAIModel())
+        ? "explicit stable document prefix"
+        : "implicit stable prefix with cache routing key"
       : "not applicable",
     sections: prepared.map(({ chunk, manifest }, index) => {
       const timeline = analyzeTranscriptTimeline(chunk.text)
@@ -1032,17 +1078,20 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
     throw new Error(source.data?.error?.message || "Could not recover the queued note section.")
   }
 
+  const retryModel = source.data.model || getOpenAIModel()
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-    model: source.data.model || getOpenAIModel(),
+    model: retryModel,
     instructions: source.data.instructions || SYSTEM_PROMPT,
     input: source.data.input,
     text: { verbosity: "medium" },
-    reasoning: { effort: getOpenAIReasoningEffort() },
+    reasoning: { effort: getOpenAIReasoningEffort(retryModel) },
     max_output_tokens: source.data.max_output_tokens || computeMaxOutputTokens(job.targetWords),
     background: true,
     truncation: "disabled",
     prompt_cache_key: source.data.prompt_cache_key || job.promptCacheKey,
-    prompt_cache_options: source.data.prompt_cache_options || { mode: "explicit", ttl: "30m" },
+    prompt_cache_options: supportsExplicitPromptCaching(retryModel)
+      ? source.data.prompt_cache_options || { mode: "explicit", ttl: "30m" }
+      : undefined,
     metadata: source.data.metadata || (job.context ? {
       context_strategy: job.context.strategy,
       document_chars: String(job.context.documentChars),
@@ -1050,6 +1099,7 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
       section: `${job.context.part}/${job.context.total}`,
       estimated_input_tokens: String(job.context.estimatedInputTokens),
       document_duration: job.context.documentDuration || "not-detected",
+      document_duration_minutes: String(job.context.documentDurationMinutes || 0),
       document_timestamp_count: String(job.context.documentTimestampCount || 0),
       focus_time_range: `${job.context.focusStartTimestamp || "none"}-${job.context.focusEndTimestamp || "none"}`,
       previous_context_strategy: job.context.previousContextStrategy || "none",
@@ -1080,8 +1130,8 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
   const attempt = (job.expansionAttempts ?? (job.expanded ? 1 : 0)) + 1
   const remainingWords = Math.max(0, job.targetWords - currentWords)
   const input = wasTruncated
-    ? `Length correction pass ${attempt}. Use the previous generated response as the baseline. It was cut off by the output budget, so preserve every correct, useful, complete portion and replace only its broken tail. Return complete, well-formed HTML covering the same transcript material and structure. Do not shorten intact content. Aim for ${Math.floor(job.targetWords * 0.92)} to ${Math.ceil(job.targetWords * 1.06)} words if the source supports it.`
-    : `Length correction pass ${attempt}. Use the previous generated response as the primary baseline. Preserve all correct, useful content and its established hierarchy; improve it instead of replacing it with another short summary. The prior notes contain about ${currentWords} words, leaving a supported shortfall of about ${remainingWords} words against the ${job.targetWords}-word target. Recover meaningful definitions, explanations, analogy mappings, examples, steps, equations, formulas, conditions, causes, effects, announcements, distinctions, and connections that the original transcript supports but the previous response omitted or compressed. Fully develop those source-supported details instead of merely rephrasing existing bullets. Aim for ${Math.floor(job.targetWords * 0.92)} to ${Math.ceil(job.targetWords * 1.06)} words when supported. Remove only vague observations, exact redundancy, repeated lead-ins, generic filler, and unnecessary notes. Preserve meaningful differences and context. Do not change page ownership, interpret ambiguous remarks, introduce outside knowledge, or use bold text inside bullets.`
+    ? `Length correction pass ${attempt}. Use the previous generated response as the baseline. It was cut off by the output budget, so preserve every correct, useful, complete portion and replace only its broken tail. Return complete, well-formed HTML covering the same transcript material and structure. Do not shorten intact content. Keep every first-level dark bullet as a three-to-six-word title. Supporting bullets have no fixed word count, but each must fit one Verdana 12-point line at its nesting depth. Add nested bullets instead of wrapping or dropping details. Aim for ${Math.floor(job.targetWords * 0.92)} to ${Math.ceil(job.targetWords * 1.06)} words if the source supports it.`
+    : `Length correction pass ${attempt}. Use the previous generated response as the primary baseline. Preserve all correct, useful content and its established hierarchy; improve it instead of replacing it with another short summary. The prior notes contain about ${currentWords} words, leaving a supported shortfall of about ${remainingWords} words against the ${job.targetWords}-word target. Recover meaningful definitions, explanations, analogy mappings, examples, steps, equations, formulas, conditions, causes, effects, announcements, distinctions, and connections that the original transcript supports but the previous response omitted or compressed. Fully develop those source-supported details instead of merely rephrasing existing bullets. Aim for ${Math.floor(job.targetWords * 0.92)} to ${Math.ceil(job.targetWords * 1.06)} words when supported. Remove only vague observations, exact redundancy, repeated lead-ins, generic filler, and unnecessary notes. Preserve meaningful differences and context. Keep every first-level dark bullet as a three-to-six-word title. Supporting bullets have no fixed word count, but each must fit one Verdana 12-point line at its nesting depth. Add nested bullets instead of wrapping or dropping details. Do not change page ownership, interpret ambiguous remarks, introduce outside knowledge, or use bold text inside bullets.`
 
   if (job.id.startsWith(GEMINI_JOB_PREFIX)) {
     const id = await submitGeminiChunk(
@@ -1093,18 +1143,23 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
     return { ...job, id, expanded: true, expansionAttempts: attempt }
   }
 
+  const model = getOpenAIModel()
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
-    model: getOpenAIModel(),
+    model,
     previous_response_id: job.id,
     instructions: SYSTEM_PROMPT,
     input,
     text: { verbosity: "medium" },
-    reasoning: { effort: getOpenAIReasoningEffort() },
+    reasoning: { effort: getOpenAIReasoningEffort(model) },
     max_output_tokens: computeMaxOutputTokens(job.targetWords * (wasTruncated ? 1.5 : 1)),
     background: true,
     truncation: "disabled",
     prompt_cache_key: job.promptCacheKey,
-    prompt_cache_options: job.promptCacheKey ? { mode: "implicit", ttl: "30m" } : { mode: "explicit", ttl: "30m" },
+    prompt_cache_options: supportsExplicitPromptCaching(model)
+      ? job.promptCacheKey
+        ? { mode: "implicit", ttl: "30m" }
+        : { mode: "explicit", ttl: "30m" }
+      : undefined,
     metadata: job.context ? {
       context_strategy: job.context.strategy,
       document_chars: String(job.context.documentChars),
@@ -1112,6 +1167,7 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
       section: `${job.context.part}/${job.context.total}`,
       estimated_input_tokens: String(job.context.estimatedInputTokens),
       document_duration: job.context.documentDuration || "not-detected",
+      document_duration_minutes: String(job.context.documentDurationMinutes || 0),
       document_timestamp_count: String(job.context.documentTimestampCount || 0),
       focus_time_range: `${job.context.focusStartTimestamp || "none"}-${job.context.focusEndTimestamp || "none"}`,
       previous_context_strategy: job.context.previousContextStrategy || "none",

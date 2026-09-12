@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
       ...estimateTranscript(transcript),
       duration: timeline.durationLabel,
       durationSeconds: timeline.durationSeconds,
+      durationMinutes: timeline.durationMinutes,
       timestampCount: timeline.timestampCount,
       firstTimestamp: timeline.firstTimestamp,
       lastTimestamp: timeline.lastTimestamp,

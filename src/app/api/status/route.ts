@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { expandBackgroundNotes, getBackgroundNoteStatus, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
 import { createNotesDocx } from "@/lib/docx-generator"
+import { normalizeDurationMinutes } from "@/lib/transcript-metadata"
 
 type JobStatus = {
   id: string
@@ -37,6 +38,7 @@ export async function POST(request: NextRequest) {
           const validTimelineContext = context === undefined || (
             (context.documentTimestampCount === undefined || (Number.isInteger(context.documentTimestampCount) && context.documentTimestampCount >= 0))
             && (context.documentDurationSeconds === undefined || (Number.isInteger(context.documentDurationSeconds) && context.documentDurationSeconds >= 0))
+            && (context.documentDurationMinutes === undefined || (Number.isInteger(context.documentDurationMinutes) && context.documentDurationMinutes >= 0))
             && (context.documentDuration === undefined || (typeof context.documentDuration === "string" && context.documentDuration.length <= 20))
             && (context.focusTimestampCount === undefined || (Number.isInteger(context.focusTimestampCount) && context.focusTimestampCount >= 0))
             && (context.focusStartTimestamp === undefined || context.focusStartTimestamp === null || (typeof context.focusStartTimestamp === "string" && context.focusStartTimestamp.length <= 20))
@@ -72,7 +74,9 @@ export async function POST(request: NextRequest) {
       ? body.downloadName.replace(/[\r\n"/\\]/g, "").slice(0, 150)
       : "Organized Notes.docx"
     const titleName = typeof body.titleName === "string" ? body.titleName.replace(/[\r\n]/g, "").slice(0, 150) : ""
-    const duration = typeof body.duration === "string" ? body.duration.replace(/[\r\n]/g, "").slice(0, 40) : ""
+    const duration = typeof body.duration === "string"
+      ? normalizeDurationMinutes(body.duration.replace(/[\r\n]/g, "").slice(0, 40))
+      : ""
     const returnNotesHtml = body.returnNotesHtml === true
 
     if (!jobs.length) {
