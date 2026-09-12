@@ -134,9 +134,6 @@ function parseBullets(ulContent: string): Bullet[] {
   return bullets
 }
 
-// Conservative usable widths for Google Docs and DOCX after each bullet indent.
-// Width, not word count, determines whether a supporting bullet must be divided.
-const MAX_BULLET_WIDTH_POINTS = [430, 405, 380, 355]
 const TITLE_FILLER_WORDS = new Set([
   "a", "an", "and", "are", "at", "be", "been", "being", "but", "by", "can",
   "could", "did", "do", "does", "for", "had", "has", "have", "in", "is", "may",
@@ -144,42 +141,18 @@ const TITLE_FILLER_WORDS = new Set([
   "those", "to", "was", "were", "will", "with", "would",
 ])
 
-function estimateVerdana12Width(text: string): number {
-  return [...text].reduce((width, character) => {
-    if (/\s/.test(character)) return width + 3.5
-    if (/[ilI.,'`!|]/.test(character)) return width + 3.25
-    if (/[mwMW@%&]/.test(character)) return width + 9.5
-    if (/[A-Z0-9]/.test(character)) return width + 7
-    return width + 6
-  }, 0)
-}
-
-function splitOneLineBullet(text: string, level: number): string[] {
-  const words = text.split(/\s+/).filter(Boolean)
-  const maxWidth = MAX_BULLET_WIDTH_POINTS[Math.min(level, MAX_BULLET_WIDTH_POINTS.length - 1)]
-  if (estimateVerdana12Width(text) <= maxWidth) return [text]
-
-  const lines: string[][] = []
-  let current: string[] = []
-  for (const word of words) {
-    const candidate = [...current, word].join(" ")
-    if (current.length && estimateVerdana12Width(candidate) > maxWidth) {
-      lines.push(current)
-      current = [word]
-    } else {
-      current.push(word)
-    }
-  }
-  if (current.length) lines.push(current)
-
-  const last = lines.at(-1)
-  const previous = lines.at(-2)
-  while (last && previous && last.length < 3 && previous.length > 3) {
-    const candidate = [previous.at(-1) || "", ...last].join(" ")
-    if (estimateVerdana12Width(candidate) > maxWidth) break
-    last.unshift(previous.pop() || "")
-  }
-  return lines.map((line) => line.join(" "))
+// Apply only meaning-preserving concisions here. Semantic shortening belongs in the
+// model prompt because an exporter cannot safely summarize an arbitrary sentence.
+// Most importantly, never split text at a width boundary. Doing that turns the second
+// visual line into a new bullet even when it is only a grammatical continuation.
+function condenseBulletWording(text: string): string {
+  return text
+    .replace(/^(?:It is important to note that|It should be noted that)\s+/i, "")
+    .replace(/\b[Dd]ue to the fact that\b/g, (match) => match[0] === "D" ? "Because" : "because")
+    .replace(/\b[Ii]n order to\b/g, (match) => match[0] === "I" ? "To" : "to")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/^[a-z]/, (letter) => letter.toUpperCase())
 }
 
 function toTitleWord(word: string): string {
@@ -198,30 +171,26 @@ function deriveDarkBulletTitle(text: string): string {
   return selected.map(toTitleWord).join(" ") || "Source Detail"
 }
 
-// Model instructions normally produce the requested layout. This deterministic
-// export guard prevents occasional long responses from wrapping in Verdana 12pt.
-// No source text is discarded. A long top-level statement becomes a short title,
-// and its full wording is retained in one-line child bullets.
+// Model instructions normally produce concise bullets. This deterministic export
+// guard repairs an invalid top-level sentence without ever cutting a sentence into
+// arbitrary bullet fragments. If wording is still too wide, normal line wrapping is
+// preferable to corrupting its grammar or meaning.
 function normalizeBulletLayout(bullets: Bullet[], level = 0): Bullet[] {
-  return bullets.flatMap((bullet) => {
+  return bullets.map((bullet) => {
     const normalizedChildren = normalizeBulletLayout(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL))
-    const wordCount = bullet.text.split(/\s+/).filter(Boolean).length
-    const isShortTitle = level === 0 && wordCount <= 6 && !/[.!?]$/.test(bullet.text)
+    const conciseText = condenseBulletWording(bullet.text)
+    const wordCount = conciseText.split(/\s+/).filter(Boolean).length
+    const isShortTitle = level === 0 && wordCount <= 6 && !/[.!?]$/.test(conciseText)
 
     if (level === 0) {
-      if (isShortTitle) return [{ text: bullet.text, children: normalizedChildren }]
-      const retainedDetail = splitOneLineBullet(bullet.text, 1).map((text) => ({ text, children: [] }))
-      return [{
-        text: deriveDarkBulletTitle(bullet.text),
-        children: [...retainedDetail, ...normalizedChildren],
-      }]
+      if (isShortTitle) return { text: conciseText, children: normalizedChildren }
+      return {
+        text: deriveDarkBulletTitle(conciseText),
+        children: [{ text: conciseText, children: [] }, ...normalizedChildren],
+      }
     }
 
-    const lines = splitOneLineBullet(bullet.text, level)
-    return lines.map((text, index) => ({
-      text,
-      children: index === lines.length - 1 ? normalizedChildren : [],
-    }))
+    return { text: conciseText, children: normalizedChildren }
   })
 }
 
@@ -264,7 +233,8 @@ export function parseNotes(html: string): { announcements: SubSection[]; lecture
 }
 
 // Shaded circle bullets for all levels (fisheye ◉, hollow circle ○, filled square ■, repeat).
-// Each level indents by 0.25". The generator limits bullet text to one line.
+// Each level indents by 0.25". Generated bullets target one line, but the exporter
+// never manufactures a new bullet merely because the text wraps visually.
 function buildBulletLevels() {
   const glyphs = ["◉", "○", "■", "◉"]
   return glyphs.map((text, level) => ({

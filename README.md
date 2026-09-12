@@ -47,9 +47,9 @@ GPT-5 nano remains available as an optional override for smaller documents, but 
 context window and entry-tier token rate limit are lower than Luna's.
 
 Generated DOCX and Google Docs output uses Verdana at 12 points throughout. Dark
-first-level bullets are short three-to-six-word titles, with source-supported detail
-distributed across width-limited one-line nested bullets. Supporting bullets do not
-have a fixed word count.
+first-level bullets are short three-to-six-word titles. Supporting bullets are
+rewritten as concise, complete statements that target one line without cutting a
+sentence into separate bullet fragments.
 
 Duration is entered as whole minutes, such as `90`, `120`, or `150`. Transcript
 timestamps are converted to whole minutes automatically, and exported documents show

@@ -357,7 +357,7 @@ export async function writeNotesToGoogleDoc(
   console.info("Google Docs output layout", {
     generatedWords,
     estimatedPagesAt350Words: Number((generatedWords / 350).toFixed(1)),
-    formatting: "Verdana 12pt, 108% line spacing, one-line bullets",
+    formatting: "Verdana 12pt, 108% line spacing, concise complete bullets",
   })
 
   await docs.documents.batchUpdate({
