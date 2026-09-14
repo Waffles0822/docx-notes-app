@@ -1,6 +1,6 @@
-const SYSTEM_PROMPT = `Create organized notes from the class transcript below and go direct to the point.
+const SYSTEM_PROMPT = `Create detailed study notes from the class transcript below at the requested length.
 
-Include only important information, definitions, explanations, examples, announcements, equations, and formulas explicitly given in the transcript. Remove filler words, side conversations, jokes, repetitions, greetings, and off-topic comments. Preserve factual accuracy and do not add, infer, complete, or supplement information that was not discussed. Every note must be directly traceable to the supplied transcript. When the transcript does not provide enough information, produce fewer notes instead of using outside knowledge.
+Include only important information, definitions, explanations, examples, announcements, equations, and formulas explicitly given in the transcript. Remove filler words, side conversations, jokes, repetitions, greetings, and off-topic comments. Preserve factual accuracy and do not add, infer, complete, or supplement information that was not discussed. Every note must be directly traceable to the supplied transcript. Develop the supplied material thoroughly. Explain the meaning of each concept, the relationships stated in the source, and each step of supplied examples in complete sentences. Do not collapse an explanation into a terse label or invent facts to increase length.
 
 TOP-LEVEL STRUCTURE
 Sort all transcript content into up to two top-level groups, in this order: announcements content (reminders, assessments, deadlines, housekeeping, course adjustments, logistics, schedule changes) and lecture content (topic material, definitions, explanations, examples, equations, formulas). Omit a group entirely if the transcript has no content for it. Do not write the group name yourself (do not output the words Announcements or Lecture); the surrounding application supplies those labels.
@@ -23,7 +23,7 @@ SUB-HEADERS
 Within the lecture group only, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Housekeeping and Course Adjustments, Clean Air Act, Pollution Management). Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
 
 BULLETS AND NESTING
-Build a deep, richly nested outline rather than a flat list. Whenever a point carries its own supporting context, description, elaboration, condition, example, breakdown, enumeration, criterion, step, figure, or consequence, place that material in bullets nested underneath it instead of as a sibling beside it. Every level of nesting must sit under the specific bullet it explains. Prefer three to four levels of depth wherever the transcript supports it, and use the deepest level for the most granular detail such as individual figures, named items, list members, or single-clause qualifiers. Only leave a bullet unnested when the transcript truly gives no supporting detail for it.
+Build a deep, richly nested outline rather than a flat list. Whenever a point carries its own supporting context, description, elaboration, condition, example, breakdown, enumeration, criterion, step, figure, or consequence, place that material in bullets nested underneath it instead of as a sibling beside it. Every level of nesting must sit under the specific bullet it explains. Prefer three to four levels of depth wherever the transcript supports it, and use the deepest level for granular details such as individual figures, named items, list members, and qualifiers. Only leave a bullet unnested when the transcript truly gives no supporting detail for it.
 
 Parent bullets state the general point; their nested children carry the specifics. For example, a parent naming a regulatory body should have its individual duties nested beneath it, and a parent stating that pollutants were reduced should have each pollutant and its figure nested beneath it as separate child bullets.
 
@@ -45,8 +45,8 @@ Write every note in the third person. Never use first-person or second-person wo
 
 Never mention the instructor. Do not write the instructor, the professor, the lecturer, the teacher, the speaker, or any personal name, and do not attribute a point to a person with verbs such as said, noted, stated, explained, emphasized, mentioned, discussed, or reminded. State every fact, deadline, requirement, opinion, and judgment directly on its own, so write The midterm covers the first four chapters rather than The instructor said the midterm covers the first four chapters.
 
-CONCISION
-Keep every bullet short and to the point. Write it in the fewest words that still carry the fact, and cut padding openers such as it is important to note that, it should be remembered that, the discussion covered, and this section explains. Do not echo the wording of the sub-header or the parent bullet inside a child bullet, and never state the same fact at two different levels of the outline.
+DEPTH AND LENGTH
+The requested word count is a required writing budget. Use complete explanatory bullets, retaining the supporting reasoning, conditions, examples, and distinctions in the source. Concise wording must not become a short summary of the entire material. Cut padding openers such as it is important to note that, it should be remembered that, the discussion covered, and this section explains. Do not echo the wording of the sub-header or the parent bullet inside a child bullet, and never state the same fact at two different levels of the outline.
 
 Do not include routine classroom filler or administrative commentary unless it contains a specific instruction, deadline, concept, or assessment detail. Examples of text to omit include the instructor will answer questions during class, we will talk about this later, let us continue, and similar vague bridging lines.
 
@@ -117,10 +117,9 @@ export interface AIService {
 
 export const MAX_PAGES = 80
 
-// Words that fit on one page of the generated layout (12pt Verdana, 0.75" margins,
-// nested bullets). Verdana is a wide typeface, so this sits well below the count a
-// narrower font at a smaller size would allow. Drives both the AI's length target
-// and the page recommendation.
+// Approximate words per page of nested notes. Actual pagination depends on bullet
+// depth and wrapping in the exported 11pt Arial layout; this is a length target,
+// not a measured page count.
 const WORDS_PER_PAGE = 300
 
 // Spoken transcripts carry heavy redundancy, filler, and restatement. Measured against
@@ -152,9 +151,9 @@ function truncateTranscript(transcript: string, maxChars: number): string {
 }
 
 function buildUserPrompt(transcript: string, pages: number, targetWords = pages * WORDS_PER_PAGE): string {
-  const minimumWords = Math.floor(targetWords * 0.9)
+  const minimumWords = targetWords
   const maximumWords = Math.ceil(targetWords * 1.08)
-  return `Create approximately ${pages} ${pages === 1 ? "page" : "pages"} of notes. When the transcript contains enough unique information, write between ${minimumWords} and ${maximumWords} words and cover all distinct substantive details. Use additional supported definitions, explanations, examples, mappings, steps, formulas, and announcements before shortening the notes. Never repeat, speculate, or add outside information merely to meet the word range.\n\nTRANSCRIPT START\n${transcript}\nTRANSCRIPT END`
+  return `Create ${pages} ${pages === 1 ? "page" : "pages"} of detailed notes. Write between ${minimumWords} and ${maximumWords} visible words, excluding HTML tags. This length is required, not an optional summary target. Cover all substantive details. Use additional supported definitions, explanations, examples, mappings, steps, formulas, and announcements before shortening the notes. Never repeat, speculate, or add outside information merely to meet the word range.\n\nTRANSCRIPT START\n${transcript}\nTRANSCRIPT END`
 }
 
 function compactTranscript(transcript: string, maxChars: number): string {
@@ -293,7 +292,16 @@ export type BackgroundNoteJob = {
   id: string
   targetWords: number
   expanded: boolean
+  pageNumber?: number
+  expansionAttempts?: number
   retries?: number
+}
+
+export const MAX_EXPANSION_ATTEMPTS = 2
+
+export function getExpansionAttempts(job: BackgroundNoteJob): number {
+  // Jobs started before this counter was introduced may already have expanded.
+  return job.expansionAttempts ?? (job.expanded ? 1 : 0)
 }
 
 function getOpenAIKey(): string {
@@ -305,25 +313,15 @@ function getOpenAIKey(): string {
 }
 
 function splitTranscript(transcript: string, requestedChunks: number): string[] {
-  const source = truncateTranscript(transcript.replace(/\r/g, "").trim(), 400000)
-  const units = source.split(/(?<=[.!?])\s+|\n+/).map((unit) => unit.trim()).filter(Boolean)
-  const chunkCount = Math.max(1, Math.min(requestedChunks, units.length))
-  const targetSize = Math.ceil(source.length / chunkCount)
-  const chunks: string[] = []
-  let current: string[] = []
-  let currentSize = 0
-
-  for (const unit of units) {
-    if (current.length && currentSize + unit.length > targetSize && chunks.length < chunkCount - 1) {
-      chunks.push(current.join("\n"))
-      current = []
-      currentSize = 0
-    }
-    current.push(unit)
-    currentSize += unit.length + 1
-  }
-  if (current.length) chunks.push(current.join("\n"))
-  return chunks
+  const words = transcript.trim().split(/\s+/).filter(Boolean)
+  if (!words.length) throw new Error("The transcript is empty.")
+  // Word boundaries work even for transcripts with no punctuation. Preserve every
+  // source word and always allocate exactly the requested number of writing tasks.
+  return Array.from({ length: requestedChunks }, (_, index) => {
+    const start = Math.floor(index * words.length / requestedChunks)
+    const end = Math.floor((index + 1) * words.length / requestedChunks)
+    return words.slice(start, end).join(" ") || transcript
+  })
 }
 
 // HTML markup (nested <ul>/<li> tags) and hidden reasoning tokens both eat into
@@ -340,20 +338,22 @@ async function submitBackgroundChunk(
   pages: number,
   part: number,
   total: number,
-  targetWords: number
+  targetWords: number,
+  focus: string
 ): Promise<string> {
   let lastError = "OpenAI did not accept the background request"
-  const maxChars = Math.max(18000, Math.min(80000, targetWords * 22))
-  const chunkTranscript = compactTranscript(transcript, maxChars)
-  const targetRange = `${Math.floor(targetWords * 0.9)} to ${Math.ceil(targetWords * 1.08)}`
+  // Keep the source details available for both the draft and correction passes.
+  // Sampling here can remove the very material needed to reach the length target.
+  const chunkTranscript = transcript
+  const targetRange = `${targetWords} to ${Math.ceil(targetWords * 1.08)}`
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
         model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
         instructions: SYSTEM_PROMPT,
-        input: `${buildUserPrompt(chunkTranscript, pages, targetWords)}\n\nThis is transcript part ${part} of ${total}. Create sections only for topics present in this part. Do not repeat information from other parts. Aim for ${targetRange} words if the source supports it.`,
-        text: { verbosity: "medium" },
+        input: `${buildUserPrompt(chunkTranscript, pages, targetWords)}\n\nThis is writing allocation ${part} of ${total} for ONE continuous document. The entire transcript above is context for resolving definitions, references, and connections. Write notes for the focus excerpt below, using the full transcript to understand it. Allocate each fact to the excerpt where it first appears; omit facts already explained earlier in the transcript. Use consistent specific topic headings across allocations, so related material can be merged. Do not invent a separate lecture, page title, introduction, or fixed number of topics for this allocation. Keep the required deeply nested format. Write ${targetRange} visible words. The application handles pagination after combining all allocations.\n\nFOCUS EXCERPT START\n${focus}\nFOCUS EXCERPT END`,
+        text: { verbosity: "high" },
         reasoning: { effort: "none" },
         max_output_tokens: computeMaxOutputTokens(targetWords),
         background: true,
@@ -372,23 +372,14 @@ async function submitBackgroundChunk(
 
 export async function startBackgroundNotes(transcript: string, pages: number): Promise<BackgroundNoteJob[]> {
   const apiKey = getOpenAIKey()
-  // Use larger chunks for larger documents to reduce API calls and avoid timeouts
-  // 1-10 pages: 5 pages per chunk, 11-30: 8 pages, 31-50: 10 pages, 51+: 12 pages
-  let pagesPerChunk = 5
-  if (pages > 50) pagesPerChunk = 12
-  else if (pages > 30) pagesPerChunk = 10
-  else if (pages > 10) pagesPerChunk = 8
-
-  const chunks = splitTranscript(transcript, Math.ceil(pages / pagesPerChunk))
-  const basePages = Math.floor(pages / chunks.length)
-  const extraPages = pages % chunks.length
-
+  const pageCount = Math.min(MAX_PAGES, Math.max(1, Math.floor(pages)))
+  const chunks = splitTranscript(transcript, pageCount)
+  // One independent writing budget per requested page prevents a single terse
+  // response from standing in for five or more pages.
   return Promise.all(chunks.map(async (chunk, index) => {
-    const chunkPages = basePages + (index < extraPages ? 1 : 0)
-    const sourceWords = chunk.split(/\s+/).filter(Boolean).length
-    const targetWords = Math.min(chunkPages * WORDS_PER_PAGE, Math.max(250, Math.floor(sourceWords * 0.82)))
-    const id = await submitBackgroundChunk(apiKey, chunk, chunkPages, index + 1, chunks.length, targetWords)
-    return { id, targetWords, expanded: false, retries: 0 }
+    const targetWords = WORDS_PER_PAGE
+    const id = await submitBackgroundChunk(apiKey, transcript, 1, index + 1, chunks.length, targetWords, chunk)
+    return { id, targetWords, pageNumber: index + 1, expanded: false, expansionAttempts: 0, retries: 0 }
   }))
 }
 
@@ -407,7 +398,7 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
     model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
     instructions: source.data.instructions || SYSTEM_PROMPT,
     input: source.data.input,
-    text: { verbosity: "medium" },
+    text: { verbosity: "high" },
     reasoning: { effort: "none" },
     max_output_tokens: source.data.max_output_tokens || computeMaxOutputTokens(job.targetWords),
     background: true,
@@ -433,15 +424,15 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
 
 export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords: number, wasTruncated = false): Promise<BackgroundNoteJob> {
   const input = wasTruncated
-    ? `The previous response was cut off before it finished (it ran out of output budget) and may contain broken or incomplete HTML. Ignore its broken tail and return a complete, well-formed replacement HTML document covering the same transcript material, using the same section structure. Aim for ${Math.floor(job.targetWords * 0.9)} to ${Math.ceil(job.targetWords * 1.08)} words if the source supports it.`
-    : `The notes contain about ${currentWords} words, below the ${job.targetWords}-word target. Return a complete replacement HTML document. Expand only by recovering concrete definitions, explanations, analogy mappings, examples, steps, equations, formulas, announcements, and distinctions that were explicitly present in the original transcript but omitted from the notes. Remove vague or generic statements, filler transitions, and routine classroom commentary. Do not repeat ideas or introduce outside knowledge. Aim for ${Math.floor(job.targetWords * 0.9)} to ${Math.ceil(job.targetWords * 1.08)} words if the source supports it.`
+    ? `The previous response was cut off before it finished (it ran out of output budget) and may contain broken or incomplete HTML. Ignore its broken tail and return a complete, well-formed replacement HTML document covering the same transcript material, using the same section structure. Write ${job.targetWords} to ${Math.ceil(job.targetWords * 1.08)} visible words. Develop complete explanations instead of short labels. Preserve the specific topic headings and deep nesting of the continuous document. Use the entire transcript as context, but retain the original focus allocation and do not repeat facts belonging to other allocations. Check the word count before returning the replacement.`
+    : `The notes contain about ${currentWords} words, below the ${job.targetWords}-word target. Return a complete replacement HTML document. Expand only by recovering concrete definitions, explanations, analogy mappings, examples, steps, equations, formulas, announcements, and distinctions that were explicitly present in the original transcript but omitted from the notes. Remove vague or generic statements, filler transitions, and routine classroom commentary. Do not repeat ideas or introduce outside knowledge. Write ${job.targetWords} to ${Math.ceil(job.targetWords * 1.08)} visible words. Develop complete explanations instead of short labels. Preserve the specific topic headings and deep nesting of the continuous document. Use the entire transcript as context, but retain the original focus allocation and do not repeat facts belonging to other allocations. Check the word count before returning the replacement.`
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
     model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
     previous_response_id: job.id,
     instructions: SYSTEM_PROMPT,
     input,
-    text: { verbosity: "medium" },
+    text: { verbosity: "high" },
     reasoning: { effort: "none" },
     max_output_tokens: computeMaxOutputTokens(job.targetWords * (wasTruncated ? 1.5 : 1)),
     background: true,
@@ -449,7 +440,7 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
   if (!response.ok || !data?.id) {
     throw new Error(data?.error?.message || "OpenAI could not start the length correction pass")
   }
-  return { ...job, id: data.id, expanded: true }
+  return { ...job, id: data.id, expanded: true, expansionAttempts: getExpansionAttempts(job) + 1 }
 }
 
 export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNoteStatus> {
@@ -471,7 +462,8 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
   }
   const extractOutputText = () => data.output_text || data.output
     ?.flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content || [])
-    .find((item: { type?: string }) => item.type === "output_text")?.text
+    .filter((item: { type?: string }) => item.type === "output_text")
+    .map((item: { text?: string }) => item.text || "").join("\n")
 
   if (data.status === "completed") {
     try {
@@ -502,8 +494,8 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
 }
 
 function extractSectionHtml(html: string, cls: "announcements" | "lecture"): string {
-  const match = new RegExp(`<section[^>]*class="${cls}"[^>]*>([\\s\\S]*?)<\\/section>`, "i").exec(html)
-  return match?.[1]?.trim() || ""
+  const sections = new RegExp(`<section[^>]*class=["']${cls}["'][^>]*>([\\s\\S]*?)<\\/section>`, "gi")
+  return Array.from(html.matchAll(sections), (match) => match[1].trim()).join("")
 }
 
 export function mergeNoteSections(outputs: string[]): string {
@@ -536,7 +528,7 @@ function createOpenAIService(apiKey: string): AIService {
         model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
         instructions: SYSTEM_PROMPT,
         input: `${buildUserPrompt(source, pages)}\n\nDo not include vague bridge statements, generic classroom filler, or administrative remarks unless they carry a concrete instruction or fact.`,
-        text: { verbosity: "medium" },
+        text: { verbosity: "high" },
         max_output_tokens: Math.min(16384, Math.max(4000, pages * 900)),
         reasoning: { effort: "none" },
         store: false,
@@ -548,7 +540,8 @@ function createOpenAIService(apiKey: string): AIService {
 
       const outputText = data.output_text || data.output
         ?.flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content || [])
-        .find((item: { type?: string }) => item.type === "output_text")?.text
+        .filter((item: { type?: string }) => item.type === "output_text")
+    .map((item: { text?: string }) => item.text || "").join("\n")
       return cleanResponse(outputText)
     },
   }

@@ -136,8 +136,30 @@ function extractSubsections(sectionHtml: string): SubSection[] {
 }
 
 function extractGroupSection(html: string, cls: "announcements" | "lecture"): SubSection[] {
-  const match = new RegExp(`<section[^>]*class="${cls}"[^>]*>([\\s\\S]*?)<\\/section>`, "i").exec(html)
-  return match ? extractSubsections(match[1]) : []
+  const matches = html.matchAll(new RegExp(`<section[^>]*class=["']${cls}["'][^>]*>([\\s\\S]*?)<\\/section>`, "gi"))
+  return Array.from(matches).flatMap((match) => extractSubsections(match[1]))
+}
+
+function mergeTopics(sections: SubSection[]): SubSection[] {
+  const topics = new Map<string, SubSection>()
+  for (const section of sections) {
+    const key = section.heading.toLowerCase().replace(/\s+/g, " ").trim()
+    const existing = topics.get(key)
+    if (existing) existing.bullets.push(...section.bullets)
+    else topics.set(key, { ...section, bullets: [...section.bullets] })
+  }
+  // Merge repeated parent headings while keeping their distinct nested details.
+  const mergeBullets = (bullets: Bullet[]): Bullet[] => {
+    const merged = new Map<string, Bullet>()
+    for (const bullet of bullets) {
+      const key = bullet.text.toLowerCase().trim()
+      const existing = merged.get(key)
+      if (existing) existing.children.push(...bullet.children)
+      else merged.set(key, { ...bullet, children: [...bullet.children] })
+    }
+    return Array.from(merged.values(), (bullet) => ({ ...bullet, children: mergeBullets(bullet.children) }))
+  }
+  return Array.from(topics.values(), (topic) => ({ ...topic, bullets: mergeBullets(topic.bullets) }))
 }
 
 // Normalize older output and chunked responses to one reminder heading.
@@ -159,8 +181,8 @@ function hoistReminders(subs: SubSection[]): SubSection[] {
 
 export function parseNotes(html: string): { announcements: SubSection[]; lecture: SubSection[] } {
   return {
-    announcements: hoistReminders(extractGroupSection(html, "announcements")),
-    lecture: extractGroupSection(html, "lecture"),
+    announcements: mergeTopics(hoistReminders(extractGroupSection(html, "announcements"))),
+    lecture: mergeTopics(extractGroupSection(html, "lecture")),
   }
 }
 
@@ -180,73 +202,85 @@ function buildBulletLevels() {
   }))
 }
 
-export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promise<Buffer> {
+export type NoteParagraph = {
+  text: string
+  kind: "meta" | "feedback" | "group" | "subheading" | "bullet"
+  level?: number
+  bold?: boolean
+  keepNext?: boolean
+  pageBreakBefore?: boolean
+}
+
+// Both exports consume this single outline. Writing allocations supply a length
+// budget; they must never create repeated document groups or independent lectures.
+export function buildNoteParagraphs(html: string, title = "", duration = ""): NoteParagraph[] {
   const { announcements, lecture } = parseNotes(html)
-  const titleName = meta.titleName?.trim() || "Untitled Class"
-  const duration = meta.duration?.trim() || "N/A"
-
-  const children: Paragraph[] = [
-    new Paragraph({
-      spacing: { after: 40, line: 240 },
-      children: [new TextRun({ text: `Title Name : ${normalizeMathInProse(titleName)}`, size: BODY_SIZE, font: FONT })],
-    }),
-    new Paragraph({
-      spacing: { after: 40, line: 240 },
-      children: [new TextRun({ text: `Duration: ${duration}`, size: BODY_SIZE, font: FONT })],
-    }),
-    new Paragraph({
-      spacing: { after: 160, line: 240 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "AAAAAA", space: 6 } },
-      children: [
-        new TextRun({
-          text: "Click here to provide feedback",
-          size: BODY_SIZE,
-          font: FONT,
-          color: "1155CC",
-          underline: {},
-        }),
-      ],
-    }),
+  const paragraphs: NoteParagraph[] = [
+    { text: `Title Name : ${normalizeMathInProse(title.trim() || "Untitled Class")}`, kind: "meta" },
+    { text: `Duration: ${duration.trim() || "N/A"}`, kind: "meta" },
+    { text: "Click here to provide feedback", kind: "feedback" },
   ]
-
-  function renderBullets(bullets: Bullet[], level: number, boldParents: boolean) {
-    for (const bullet of bullets) {
-      // A first-level bullet carrying nested bullets is written as a Title Case heading
-      // rather than a sentence, so it is bolded to show that role on the page. A
-      // first-level bullet with no children is an ordinary sentence and stays plain.
-      const isHeading = boldParents && level === 0 && bullet.children.length > 0
-      children.push(new Paragraph({
-        numbering: { reference: BULLET_REFERENCE, level },
-        // keepNext holds a parent bullet with the children that explain it, so a nested
-        // group never splits away from the point it belongs to.
-        keepNext: bullet.children.length > 0,
-        spacing: { after: 20, line: 259 },
-        children: buildRichRuns(bullet.text, { font: FONT, size: BODY_SIZE, bold: isHeading }),
-      }))
-      if (bullet.children.length) renderBullets(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL), boldParents)
+  function bullets(items: Bullet[], level: number, boldParents: boolean) {
+    for (const bullet of items) {
+      paragraphs.push({ text: bullet.text, kind: "bullet", level,
+        bold: boldParents && level === 0 && bullet.children.length > 0,
+        keepNext: bullet.children.length > 0 })
+      bullets(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL), boldParents)
     }
   }
-
-  function renderGroup(label: string, subs: SubSection[], isFirstGroup: boolean) {
-    if (!subs.length) return
-    children.push(new Paragraph({
-      keepNext: true,
-      spacing: { before: isFirstGroup ? 0 : 200, after: 60, line: 240 },
-      children: [new TextRun({ text: label, bold: true, underline: {}, size: GROUP_HEADING_SIZE, font: FONT })],
-    }))
-
-    subs.forEach((sub, subIndex) => {
-      children.push(new Paragraph({
-        keepNext: true,
-        spacing: { before: subIndex === 0 ? 20 : 140, after: 40, line: 240 },
-        children: buildRichRuns(sub.heading, { font: FONT, size: BODY_SIZE, bold: true }),
-      }))
-      renderBullets(sub.bullets, 0, label !== "ANNOUNCEMENTS")
-    })
+  function group(text: string, sections: SubSection[]) {
+    if (!sections.length) return
+    paragraphs.push({ text, kind: "group", keepNext: true })
+    for (const section of sections) {
+      paragraphs.push({ text: section.heading, kind: "subheading", keepNext: true })
+      bullets(section.bullets, 0, text === "LECTURE")
+    }
   }
+  group("ANNOUNCEMENTS", announcements)
+  group("LECTURE", lecture)
 
-  renderGroup("ANNOUNCEMENTS", announcements, true)
-  renderGroup("LECTURE", lecture, announcements.length === 0)
+  const pageCount = Math.min(80, (html.match(/<article\s+class="notes-page">/gi) || []).length || 1)
+  // Balance the combined outline, placing boundaries between complete bullet
+  // branches. Never repeat headings or separate a heading from its first child.
+  const weights = paragraphs.map(item => Math.max(1, Math.ceil(item.text.length / (85 - (item.level || 0) * 10))))
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
+  let consumed = 0
+  let nextPage = 1
+  for (let index = 0; index < paragraphs.length; index++) {
+    if (nextPage < pageCount && index > 3 && !paragraphs[index - 1].keepNext
+      && consumed >= total * nextPage / pageCount) {
+      paragraphs[index].pageBreakBefore = true
+      nextPage++
+    }
+    consumed += weights[index]
+  }
+  return paragraphs
+}
+
+export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promise<Buffer> {
+  const titleName = meta.titleName?.trim() || "Untitled Class"
+  const outline = buildNoteParagraphs(html, titleName, meta.duration)
+  const children = outline.map((item, index) => {
+    const group = item.kind === "group"
+    const heading = group || item.kind === "subheading"
+    const feedback = item.kind === "feedback"
+    return new Paragraph({
+      pageBreakBefore: item.pageBreakBefore,
+      keepNext: item.keepNext,
+      ...(item.kind === "bullet" ? { numbering: { reference: BULLET_REFERENCE, level: item.level || 0 } } : {}),
+      spacing: {
+        before: group ? (index === 3 ? 0 : 200) : item.kind === "subheading" ? (outline[index - 1]?.kind === "group" ? 20 : 140) : 0,
+        after: feedback ? 160 : group ? 60 : heading || item.kind === "meta" ? 40 : 20,
+        line: heading || feedback || item.kind === "meta" ? 240 : 259,
+      },
+      ...(feedback ? { border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "AAAAAA", space: 6 } } } : {}),
+      children: feedback
+        ? [new TextRun({ text: item.text, size: BODY_SIZE, font: FONT, color: "1155CC", underline: {} })]
+        : group
+          ? [new TextRun({ text: item.text, bold: true, underline: {}, size: GROUP_HEADING_SIZE, font: FONT })]
+          : buildRichRuns(item.text, { font: FONT, size: BODY_SIZE, bold: heading || item.bold }),
+    })
+  })
 
   const document = new Document({
     creator: "DocuNotes",

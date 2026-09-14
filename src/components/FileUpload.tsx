@@ -148,7 +148,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
       const job = await response.json()
       if (!response.ok) throw new Error(job.error || "Failed to start note generation.")
 
-      let jobs: Array<{ id: string; targetWords: number; expanded: boolean; retries?: number }> = job.jobs
+      let jobs: Array<{ id: string; targetWords: number; expanded: boolean; pageNumber?: number; expansionAttempts?: number; retries?: number }> = job.jobs
       const downloadName: string = job.downloadName || "Organized Notes.docx"
       const pageCount: number = job.pageCount || pages
       const resolvedTitleName: string = job.titleName ?? titleName
@@ -309,7 +309,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
             {isAnalyzing
               ? "Reading your transcript to recommend a page count…"
               : estimate
-                ? `Recommended ${estimate.recommendedPages} ${estimate.recommendedPages === 1 ? "page" : "pages"} based on this transcript. Adjust if you want more or less detail.`
+                ? `Estimated ${estimate.recommendedPages} ${estimate.recommendedPages === 1 ? "page" : "pages"} based on transcript length. Choose the number of full pages to generate below.`
                 : "Upload a transcript for a recommendation, or set a page target from 1 to 80."}
           </p>
           <div className="flex flex-wrap items-center gap-3">

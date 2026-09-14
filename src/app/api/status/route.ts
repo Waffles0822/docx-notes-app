@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { expandBackgroundNotes, getBackgroundNoteStatus, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
-import { createNotesDocx } from "@/lib/docx-generator"
+import { expandBackgroundNotes, getBackgroundNoteStatus, getExpansionAttempts, MAX_EXPANSION_ATTEMPTS, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
+import { createNotesDocx, parseNotes, type Bullet } from "@/lib/docx-generator"
 
 type JobStatus = {
   id: string
@@ -14,6 +14,17 @@ export const runtime = "nodejs"
 
 const QUEUED_RETRY_MS = 3 * 60 * 1000
 const QUEUED_FAILURE_MS = 5 * 60 * 1000
+
+function countExportedWords(html: string): number {
+  const { announcements, lecture } = parseNotes(mergeNoteSections([html]))
+  const countWords = (text: string) => text.split(/\s+/).filter(Boolean).length
+  const countBullets = (bullets: Bullet[]): number => bullets.reduce(
+    (sum, bullet) => sum + countWords(bullet.text) + countBullets(bullet.children), 0
+  )
+  return [...announcements, ...lecture].reduce(
+    (sum, section) => sum + countWords(section.heading) + countBullets(section.bullets), 0
+  )
+}
 
 function getJobProgress(status: string, truncated: boolean): number {
   if (status === "completed") return 100
@@ -32,8 +43,10 @@ export async function POST(request: NextRequest) {
           return typeof candidate.id === "string" && /^resp_[a-zA-Z0-9_-]+$/.test(candidate.id)
             && typeof candidate.targetWords === "number" && candidate.targetWords >= 100 && candidate.targetWords <= 10000
             && typeof candidate.expanded === "boolean"
+            && (candidate.pageNumber === undefined || (Number.isInteger(candidate.pageNumber) && candidate.pageNumber >= 1 && candidate.pageNumber <= 80))
+            && (candidate.expansionAttempts === undefined || (Number.isInteger(candidate.expansionAttempts) && candidate.expansionAttempts >= 0 && candidate.expansionAttempts <= MAX_EXPANSION_ATTEMPTS))
             && (candidate.retries === undefined || (Number.isInteger(candidate.retries) && candidate.retries >= 0 && candidate.retries <= 1))
-        }).slice(0, 20)
+        }).slice(0, 80)
       : []
     const downloadName = typeof body.downloadName === "string"
       ? body.downloadName.replace(/[\r\n"/\\]/g, "").slice(0, 150)
@@ -42,8 +55,14 @@ export async function POST(request: NextRequest) {
     const duration = typeof body.duration === "string" ? body.duration.replace(/[\r\n]/g, "").slice(0, 40) : ""
     const returnNotesHtml = body.returnNotesHtml === true
 
-    if (!jobs.length) {
+    if (!jobs.length || jobs.length !== body.jobs.length) {
       return NextResponse.json({ error: "No valid generation jobs were provided." }, { status: 400 })
+    }
+
+    const paginated = jobs.some((job) => job.pageNumber !== undefined)
+    if (paginated && (jobs.some((job, index) => job.pageNumber !== index + 1)
+      || (body.pageCount !== undefined && body.pageCount !== jobs.length))) {
+      return NextResponse.json({ error: "The generation plan is missing a requested page. Please start generation again." }, { status: 400 })
     }
 
     const statuses = await Promise.all(jobs.map((job) => getBackgroundNoteStatus(job.id)))
@@ -105,11 +124,16 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const wordCounts = statuses.map((status) => (status.notes || "")
-      .replace(/<[^>]+>/g, " ").replace(/&[a-z0-9#]+;/gi, " ").split(/\s+/).filter(Boolean).length)
-    // A complete draft that is close to its requested size is preferable to another full
-    // model pass. Truncated or substantially short sections still get corrected.
-    const needsExpansion = jobs.map((job, index) => !job.expanded && (statuses[index].truncated || wordCounts[index] < job.targetWords * 0.8))
+    // Validate the content that survives export, on every pass including replacements.
+    const wordCounts = statuses.map((status) => countExportedWords(status.notes || ""))
+    const needsExpansion = jobs.map((job, index) => Boolean(statuses[index].truncated) || wordCounts[index] < job.targetWords * (paginated ? 1 : 0.8))
+    const exhaustedIndex = jobs.findIndex((job, index) => needsExpansion[index] && getExpansionAttempts(job) >= MAX_EXPANSION_ATTEMPTS)
+    if (exhaustedIndex !== -1) {
+      const error = statuses[exhaustedIndex].truncated
+        ? "A note section is still cut off after two automatic corrections. Please try generating again."
+        : `A note section contains only ${wordCounts[exhaustedIndex]} words against a ${jobs[exhaustedIndex].targetWords}-word target after two automatic corrections. The requested length could not be reached. Try again or choose fewer pages if the transcript contains limited unique material.`
+      return NextResponse.json({ error }, { status: 422 })
+    }
     if (needsExpansion.some(Boolean)) {
       const updatedJobs = await Promise.all(jobs.map((job, index) =>
         needsExpansion[index] ? expandBackgroundNotes(job, wordCounts[index], statuses[index].truncated) : job
@@ -119,13 +143,15 @@ export async function POST(request: NextRequest) {
         completed: needsExpansion.filter((needed) => !needed).length,
         total: jobs.length,
         jobs: updatedJobs,
-        jobStatuses: jobStatuses.map((js, idx) => needsExpansion[idx] ? { ...js, status: "expanding", progress: 75 } : js),
+        jobStatuses: jobStatuses.map((js, idx) => needsExpansion[idx] ? { ...js, id: updatedJobs[idx].id, status: "expanding", progress: 75 } : js),
         progressPercent: Math.round(jobStatuses.reduce((sum, js, idx) => sum + (needsExpansion[idx] ? 75 : js.progress), 0) / jobStatuses.length),
         correctingLength: true,
       })
     }
 
-    const notes = mergeNoteSections(statuses.map((job) => job.notes || ""))
+    const notes = paginated
+      ? statuses.map((job) => `<article class="notes-page">${mergeNoteSections([job.notes || ""])}</article>`).join("")
+      : mergeNoteSections(statuses.map((job) => job.notes || ""))
 
     if (returnNotesHtml) {
       return NextResponse.json({

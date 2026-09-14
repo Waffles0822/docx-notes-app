@@ -1,6 +1,6 @@
 import { google, docs_v1 } from "googleapis"
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
-import { parseNotes, type Bullet, type SubSection } from "./docx-generator"
+import { buildNoteParagraphs, type NoteParagraph } from "./docx-generator"
 import { normalizeMathInProse } from "./math-format"
 
 export interface GoogleTokens {
@@ -149,14 +149,7 @@ export async function fetchGoogleDocContent(tokens: GoogleTokens, docUrl: string
   return { title, text }
 }
 
-type GoogleDocParagraph = {
-  text: string
-  kind: "meta" | "feedback" | "group" | "subheading" | "bullet"
-  level?: number
-  bold?: boolean
-}
-
-type IndexedParagraph = GoogleDocParagraph & {
+type IndexedParagraph = NoteParagraph & {
   startIndex: number
   textStartIndex: number
   endIndex: number
@@ -164,48 +157,14 @@ type IndexedParagraph = GoogleDocParagraph & {
 
 const pt = (magnitude: number): docs_v1.Schema$Dimension => ({ magnitude, unit: "PT" })
 
-function flattenBullets(bullets: Bullet[], level = 0, boldParents = true): GoogleDocParagraph[] {
-  return bullets.flatMap((bullet) => [
-    {
-      text: normalizeMathInProse(bullet.text),
-      kind: "bullet" as const,
-      level,
-      bold: boldParents && level === 0 && bullet.children.length > 0,
-    },
-    ...flattenBullets(bullet.children, Math.min(level + 1, 3), boldParents),
-  ])
-}
-
-function buildGroup(label: string, sections: SubSection[]): GoogleDocParagraph[] {
-  if (!sections.length) return []
-  return [
-    { text: label, kind: "group" },
-    ...sections.flatMap((section) => [
-      { text: normalizeMathInProse(section.heading), kind: "subheading" as const },
-      ...flattenBullets(section.bullets, 0, label !== "ANNOUNCEMENTS"),
-    ]),
-  ]
-}
-
-function buildParagraphs(notesHtml: string, title: string, duration: string): GoogleDocParagraph[] {
-  const { announcements, lecture } = parseNotes(notesHtml)
-  return [
-    { text: `Title Name : ${normalizeMathInProse(title.trim() || "Untitled Class")}`, kind: "meta" },
-    { text: `Duration: ${duration.trim() || "N/A"}`, kind: "meta" },
-    { text: "Click here to provide feedback", kind: "feedback" },
-    ...buildGroup("ANNOUNCEMENTS", announcements),
-    ...buildGroup("LECTURE", lecture),
-  ]
-}
-
-function buildDocRequests(notesHtml: string, title: string, duration: string, endIndex: number): docs_v1.Schema$Request[] {
+export function buildDocRequests(notesHtml: string, title: string, duration: string, endIndex: number): docs_v1.Schema$Request[] {
   const requests: docs_v1.Schema$Request[] = []
-  const paragraphs = buildParagraphs(notesHtml, title, duration)
+  const paragraphs = buildNoteParagraphs(notesHtml, title, duration)
   const indexed: IndexedParagraph[] = []
   let index = 1
   const textContent = paragraphs.map((paragraph) => {
     // Apply indentation after creating disc bullets so every level keeps a solid circle.
-    const line = `${paragraph.text}\n`
+    const line = `${normalizeMathInProse(paragraph.text)}\n`
     indexed.push({
       ...paragraph,
       startIndex: index,
@@ -241,8 +200,8 @@ function buildDocRequests(notesHtml: string, title: string, duration: string, en
   requests.push({
     updateParagraphStyle: {
       range: { startIndex: 1, endIndex: 1 + textContent.length },
-      paragraphStyle: { lineSpacing: 108, spaceBelow: pt(1) },
-      fields: "lineSpacing,spaceBelow",
+      paragraphStyle: { lineSpacing: 108, spaceBelow: pt(1), pageBreakBefore: false },
+      fields: "lineSpacing,spaceBelow,pageBreakBefore",
     },
   })
 
@@ -267,12 +226,17 @@ function buildDocRequests(notesHtml: string, title: string, duration: string, en
       }
     }
 
+    if (paragraph.pageBreakBefore || paragraph.kind === "bullet") {
+      paragraphStyle = { ...paragraphStyle, keepWithNext: paragraph.keepNext || false }
+    }
+
     if (paragraphStyle) {
+      paragraphStyle.pageBreakBefore = paragraph.pageBreakBefore || false
       requests.push({
         updateParagraphStyle: {
           range,
           paragraphStyle,
-          fields: "lineSpacing,spaceAbove,spaceBelow,keepWithNext,borderBottom",
+          fields: "lineSpacing,spaceAbove,spaceBelow,keepWithNext,borderBottom,pageBreakBefore",
         },
       })
     }
