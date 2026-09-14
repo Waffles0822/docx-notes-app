@@ -186,10 +186,10 @@ export function parseNotes(html: string): { announcements: SubSection[]; lecture
   }
 }
 
-// Solid circle bullets at every nesting level.
+// Shaded circle, hollow circle, and square bullets distinguish nesting levels.
 // Each level indents by 0.25" with a hanging indent so wrapped lines align under the text.
 function buildBulletLevels() {
-  const glyphs = Array.from({ length: MAX_BULLET_LEVEL + 1 }, () => "●")
+  const glyphs = ["◉", "○", "■", "◉"]
   return glyphs.map((text, level) => ({
     level,
     format: LevelFormat.BULLET,
@@ -238,22 +238,6 @@ export function buildNoteParagraphs(html: string, title = "", duration = ""): No
   }
   group("ANNOUNCEMENTS", announcements)
   group("LECTURE", lecture)
-
-  const pageCount = Math.min(80, (html.match(/<article\s+class="notes-page">/gi) || []).length || 1)
-  // Balance the combined outline, placing boundaries between complete bullet
-  // branches. Never repeat headings or separate a heading from its first child.
-  const weights = paragraphs.map(item => Math.max(1, Math.ceil(item.text.length / (85 - (item.level || 0) * 10))))
-  const total = weights.reduce((sum, weight) => sum + weight, 0)
-  let consumed = 0
-  let nextPage = 1
-  for (let index = 0; index < paragraphs.length; index++) {
-    if (nextPage < pageCount && index > 3 && !paragraphs[index - 1].keepNext
-      && consumed >= total * nextPage / pageCount) {
-      paragraphs[index].pageBreakBefore = true
-      nextPage++
-    }
-    consumed += weights[index]
-  }
   return paragraphs
 }
 

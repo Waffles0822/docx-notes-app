@@ -14,6 +14,7 @@ export const runtime = "nodejs"
 
 const QUEUED_RETRY_MS = 3 * 60 * 1000
 const QUEUED_FAILURE_MS = 5 * 60 * 1000
+const PAGINATED_WORD_TARGET_RATIO = 0.98
 
 function countExportedWords(html: string): number {
   const { announcements, lecture } = parseNotes(mergeNoteSections([html]))
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest) {
             && typeof candidate.targetWords === "number" && candidate.targetWords >= 100 && candidate.targetWords <= 10000
             && typeof candidate.expanded === "boolean"
             && (candidate.pageNumber === undefined || (Number.isInteger(candidate.pageNumber) && candidate.pageNumber >= 1 && candidate.pageNumber <= 80))
+            && (candidate.pageSpan === undefined || (Number.isInteger(candidate.pageSpan) && candidate.pageSpan >= 1 && candidate.pageSpan <= 2))
             && (candidate.expansionAttempts === undefined || (Number.isInteger(candidate.expansionAttempts) && candidate.expansionAttempts >= 0 && candidate.expansionAttempts <= MAX_EXPANSION_ATTEMPTS))
             && (candidate.retries === undefined || (Number.isInteger(candidate.retries) && candidate.retries >= 0 && candidate.retries <= 1))
         }).slice(0, 80)
@@ -60,8 +62,9 @@ export async function POST(request: NextRequest) {
     }
 
     const paginated = jobs.some((job) => job.pageNumber !== undefined)
+    const requestedPages = jobs.reduce((sum, job) => sum + (job.pageSpan ?? 1), 0)
     if (paginated && (jobs.some((job, index) => job.pageNumber !== index + 1)
-      || (body.pageCount !== undefined && body.pageCount !== jobs.length))) {
+      || (body.pageCount !== undefined && body.pageCount !== requestedPages))) {
       return NextResponse.json({ error: "The generation plan is missing a requested page. Please start generation again." }, { status: 400 })
     }
 
@@ -126,7 +129,9 @@ export async function POST(request: NextRequest) {
 
     // Validate the content that survives export, on every pass including replacements.
     const wordCounts = statuses.map((status) => countExportedWords(status.notes || ""))
-    const needsExpansion = jobs.map((job, index) => Boolean(statuses[index].truncated) || wordCounts[index] < job.targetWords * (paginated ? 1 : 0.8))
+    const targetRatio = paginated ? PAGINATED_WORD_TARGET_RATIO : 0.8
+    const needsExpansion = jobs.map((job, index) => Boolean(statuses[index].truncated)
+      || wordCounts[index] < Math.ceil(job.targetWords * targetRatio))
     const exhaustedIndex = jobs.findIndex((job, index) => needsExpansion[index] && getExpansionAttempts(job) >= MAX_EXPANSION_ATTEMPTS)
     if (exhaustedIndex !== -1) {
       const error = statuses[exhaustedIndex].truncated
@@ -150,7 +155,7 @@ export async function POST(request: NextRequest) {
     }
 
     const notes = paginated
-      ? statuses.map((job) => `<article class="notes-page">${mergeNoteSections([job.notes || ""])}</article>`).join("")
+      ? statuses.map((job, index) => `<article class="notes-page" data-page-span="${jobs[index].pageSpan ?? 1}">${mergeNoteSections([job.notes || ""])}</article>`).join("")
       : mergeNoteSections(statuses.map((job) => job.notes || ""))
 
     if (returnNotesHtml) {

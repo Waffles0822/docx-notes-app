@@ -163,12 +163,12 @@ export function buildDocRequests(notesHtml: string, title: string, duration: str
   const indexed: IndexedParagraph[] = []
   let index = 1
   const textContent = paragraphs.map((paragraph) => {
-    // Apply indentation after creating disc bullets so every level keeps a solid circle.
-    const line = `${normalizeMathInProse(paragraph.text)}\n`
+    const tabs = paragraph.kind === "bullet" ? "\t".repeat(paragraph.level || 0) : ""
+    const line = `${tabs}${normalizeMathInProse(paragraph.text)}\n`
     indexed.push({
       ...paragraph,
       startIndex: index,
-      textStartIndex: index,
+      textStartIndex: index + tabs.length,
       endIndex: index + line.length,
     })
     index += line.length
@@ -276,25 +276,13 @@ export function buildDocRequests(notesHtml: string, title: string, duration: str
     return ranges
   }, [])
 
-  // Create disc bullets without leading tabs, then indent each paragraph visually.
-  // The Docs API presets otherwise alternate glyphs at nested levels.
+  // Creating nested bullets removes their leading tabs and shifts later indexes, so apply
+  // each contiguous list from the end of the document toward the beginning.
   for (const range of bulletRanges.reverse()) {
     requests.push({
       createParagraphBullets: {
         range,
         bulletPreset: "BULLET_DISC_CIRCLE_SQUARE",
-      },
-    })
-  }
-
-  for (const paragraph of indexed) {
-    if (paragraph.kind !== "bullet") continue
-    const indent = 18 + (paragraph.level || 0) * 18
-    requests.push({
-      updateParagraphStyle: {
-        range: { startIndex: paragraph.startIndex, endIndex: paragraph.endIndex },
-        paragraphStyle: { indentStart: pt(indent), indentEnd: pt(0), indentFirstLine: pt(indent - 13) },
-        fields: "indentStart,indentEnd,indentFirstLine",
       },
     })
   }

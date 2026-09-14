@@ -20,7 +20,7 @@ Use a parent bullet for each reminder and nested bullets for its date, coverage,
 </ul>
 
 SUB-HEADERS
-Within the lecture group only, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Housekeeping and Course Adjustments, Clean Air Act, Pollution Management). Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
+Within the lecture group only, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Clean Air Act, Photosynthesis, Pollution Management). Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
 
 BULLETS AND NESTING
 Build a deep, richly nested outline rather than a flat list. Whenever a point carries its own supporting context, description, elaboration, condition, example, breakdown, enumeration, criterion, step, figure, or consequence, place that material in bullets nested underneath it instead of as a sibling beside it. Every level of nesting must sit under the specific bullet it explains. Prefer three to four levels of depth wherever the transcript supports it, and use the deepest level for granular details such as individual figures, named items, list members, and qualifiers. Only leave a bullet unnested when the transcript truly gives no supporting detail for it.
@@ -293,6 +293,7 @@ export type BackgroundNoteJob = {
   targetWords: number
   expanded: boolean
   pageNumber?: number
+  pageSpan?: number
   expansionAttempts?: number
   retries?: number
 }
@@ -352,7 +353,7 @@ async function submitBackgroundChunk(
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
         model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
         instructions: SYSTEM_PROMPT,
-        input: `${buildUserPrompt(chunkTranscript, pages, targetWords)}\n\nThis is writing allocation ${part} of ${total} for ONE continuous document. The entire transcript above is context for resolving definitions, references, and connections. Write notes for the focus excerpt below, using the full transcript to understand it. Allocate each fact to the excerpt where it first appears; omit facts already explained earlier in the transcript. Use consistent specific topic headings across allocations, so related material can be merged. Do not invent a separate lecture, page title, introduction, or fixed number of topics for this allocation. Keep the required deeply nested format. Write ${targetRange} visible words. The application handles pagination after combining all allocations.\n\nFOCUS EXCERPT START\n${focus}\nFOCUS EXCERPT END`,
+        input: `${buildUserPrompt(chunkTranscript, pages, targetWords)}\n\nThis is writing allocation ${part} of ${total} for ONE continuous document. Only facts stated inside the FOCUS EXCERPT may appear in this allocation. The entire transcript above is context only for resolving definitions, pronouns, and connections; never turn material outside the focus excerpt into a note. If a fact is repeated in the transcript, include it only in the allocation whose focus excerpt contains its first occurrence and omit later repetitions. Classify deadlines, assessments, reminders, logistics, housekeeping, and schedule changes only as announcements beneath the Reminder heading. Classify instructional subject matter, definitions, explanations, examples, equations, and formulas only as lecture content. Never place the same fact in both groups. Use consistent specific topic headings across allocations, so related material can be merged. Do not invent a separate lecture, page title, introduction, or fixed number of topics for this allocation. Keep the required deeply nested format. Write ${targetRange} visible words. The application handles pagination after combining all allocations.\n\nFOCUS EXCERPT START\n${focus}\nFOCUS EXCERPT END`,
         text: { verbosity: "high" },
         reasoning: { effort: "none" },
         max_output_tokens: computeMaxOutputTokens(targetWords),
@@ -373,13 +374,15 @@ async function submitBackgroundChunk(
 export async function startBackgroundNotes(transcript: string, pages: number): Promise<BackgroundNoteJob[]> {
   const apiKey = getOpenAIKey()
   const pageCount = Math.min(MAX_PAGES, Math.max(1, Math.floor(pages)))
-  const chunks = splitTranscript(transcript, pageCount)
-  // One independent writing budget per requested page prevents a single terse
-  // response from standing in for five or more pages.
+  const jobCount = Math.ceil(pageCount / 2)
+  const chunks = splitTranscript(transcript, jobCount)
+  // Each request writes at most two pages. This keeps a concrete length budget
+  // while halving concurrent provider requests and classification boundaries.
   return Promise.all(chunks.map(async (chunk, index) => {
-    const targetWords = WORDS_PER_PAGE
-    const id = await submitBackgroundChunk(apiKey, transcript, 1, index + 1, chunks.length, targetWords, chunk)
-    return { id, targetWords, pageNumber: index + 1, expanded: false, expansionAttempts: 0, retries: 0 }
+    const pageSpan = Math.min(2, pageCount - index * 2)
+    const targetWords = WORDS_PER_PAGE * pageSpan
+    const id = await submitBackgroundChunk(apiKey, transcript, pageSpan, index + 1, chunks.length, targetWords, chunk)
+    return { id, targetWords, pageNumber: index + 1, pageSpan, expanded: false, expansionAttempts: 0, retries: 0 }
   }))
 }
 
