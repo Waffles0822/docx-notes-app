@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { calculateRemainingCredits, getStartingCredits } from "@/lib/credits"
+import { calculateRemainingCredits, getStartingCredits, summarizeCosts } from "@/lib/credits"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -24,9 +24,8 @@ export async function GET() {
     })
     if (!response.ok) return NextResponse.json({ available: false }, { status: 502 })
     const data = await response.json()
-    const spent = (data.data || []).reduce((sum: number, bucket: { results?: Array<{ amount?: { value?: number } }> }) =>
-      sum + (bucket.results || []).reduce((bucketSum, item) => bucketSum + Number(item.amount?.value || 0), 0), 0)
-    return NextResponse.json({ available: true, remaining: calculateRemainingCredits(getStartingCredits(), spent), updatedAt: Date.now() })
+    const costs = summarizeCosts(data.data || [])
+    return NextResponse.json({ available: true, remaining: calculateRemainingCredits(getStartingCredits(), costs.total), usedToday: costs.today, updatedAt: Date.now() })
   } catch {
     return NextResponse.json({ available: false }, { status: 502 })
   }

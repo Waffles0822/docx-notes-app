@@ -29,6 +29,9 @@ Parent bullets state the general point; their nested children carry the specific
 
 Write one complete, standalone idea per bullet, and do not restate the sub-header's topic inside every bullet beneath it.
 
+ONE SENTENCE PER BULLET
+Each bullet must contain exactly one sentence. A sentence ends with one final period, question mark, or exclamation mark. If a point contains multiple sentences, split it into separate nested bullets. Keep supporting detail in nested bullets, with exactly one sentence in each bullet. Fragments are allowed only for first-level topic headings and single-term labels.
+
 FIRST-LEVEL BULLET HEADINGS
 In the lecture group only, a first-level bullet that has bullets nested under it is a heading, not a sentence. Write it as a short noun phrase naming the topic its nested bullets explain, for example Enforcement Mechanisms, Sources of Air Pollution, or Steps of the Titration Process. Use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word. Never end it with a period, never write it in sentence format, and never build it around a finite verb, so write Reduction of Lead Emissions rather than Lead emissions were reduced. Keep it to roughly two to six words and push every fact, figure, and qualifier down into the bullets nested beneath it. A first-level bullet with nothing nested under it is not a heading and stays an ordinary sentence.
 

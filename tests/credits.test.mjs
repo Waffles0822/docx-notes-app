@@ -23,3 +23,13 @@ test("uses a smaller context window when an allocation has clean boundaries", as
   assert.equal(getAdaptiveContextWords("A complete sentence.\n\nAnother complete sentence."), 80)
   assert.equal(getAdaptiveContextWords("An unfinished sentence"), 180)
 })
+
+test("summarizes daily and total costs from OpenAI cost buckets", () => {
+  const { summarizeCosts } = loaded.exports
+  const result = summarizeCosts([
+    { start_time: 1, results: [{ amount: { value: 0.8 } }] },
+    { start_time: Math.floor(Date.now() / 1000), results: [{ amount: { value: 0.12 } }] },
+  ])
+  assert.equal(result.total, 0.92)
+  assert.equal(result.today, 0.12)
+})

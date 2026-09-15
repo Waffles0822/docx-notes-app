@@ -10,3 +10,15 @@ export function getStartingCredits(): number {
 export function getAdaptiveContextWords(text: string): number {
   return /[.!?]\s*$/.test(text.trim()) ? 80 : 180
 }
+
+export function summarizeCosts(buckets: Array<{ start_time?: number; results?: Array<{ amount?: { value?: number } }>; amount?: { value?: number } }>) {
+  const today = new Date()
+  today.setUTCHours(0, 0, 0, 0)
+  const todayStart = today.getTime() / 1000
+  return buckets.reduce((summary, bucket) => {
+    const amount = bucket.results?.reduce((sum, item) => sum + Number(item.amount?.value || 0), 0) ?? Number(bucket.amount?.value || 0)
+    summary.total += amount
+    if (Number(bucket.start_time || 0) >= todayStart) summary.today += amount
+    return summary
+  }, { total: 0, today: 0 })
+}

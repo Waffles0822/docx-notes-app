@@ -29,12 +29,14 @@ export default function Home() {
   const [googleDocsComplete, setGoogleDocsComplete] = useState(false)
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress>({ completed: 0, total: 1 })
   const [credits, setCredits] = useState<number | null>(null)
+  const [usedToday, setUsedToday] = useState<number | null>(null)
 
   const refreshCredits = useCallback(async () => {
     try {
       const response = await fetch("/api/credits", { cache: "no-store" })
       const data = await response.json()
       if (data.available && typeof data.remaining === "number") setCredits(data.remaining)
+      if (data.available && typeof data.usedToday === "number") setUsedToday(data.usedToday)
     } catch {}
   }, [])
 
@@ -74,6 +76,7 @@ export default function Home() {
           </div>
           <div className="text-right text-xs text-muted-foreground">
             <span className="font-medium text-foreground">${credits === null ? "—" : credits.toFixed(2)}</span> credits left
+            <span className="ml-2">· ${usedToday === null ? "—" : usedToday.toFixed(2)} used today</span>
           </div>
           <div className="hidden items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex">
             <span className="size-1.5 rounded-full bg-emerald-500" />
