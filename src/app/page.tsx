@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { AlertTriangle, BookOpen, BrainCircuit, CheckCircle2, Loader2, Sparkles } from "lucide-react"
 import FileUpload from "@/components/FileUpload"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -28,6 +28,21 @@ export default function Home() {
   const [downloadedName, setDownloadedName] = useState("")
   const [googleDocsComplete, setGoogleDocsComplete] = useState(false)
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress>({ completed: 0, total: 1 })
+  const [credits, setCredits] = useState<number | null>(null)
+
+  const refreshCredits = useCallback(async () => {
+    try {
+      const response = await fetch("/api/credits", { cache: "no-store" })
+      const data = await response.json()
+      if (data.available && typeof data.remaining === "number") setCredits(data.remaining)
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    refreshCredits()
+    const interval = window.setInterval(refreshCredits, 60_000)
+    return () => window.clearInterval(interval)
+  }, [refreshCredits])
 
   const handleDownload = ({ file, downloadName }: { file: Blob; downloadName: string }) => {
     const url = URL.createObjectURL(file)
@@ -41,6 +56,7 @@ export default function Home() {
     setDownloadedName(downloadName)
     setState("result")
     setErrorMessage("")
+    refreshCredits()
   }
 
   return (
@@ -55,6 +71,9 @@ export default function Home() {
               <p className="font-semibold leading-none tracking-tight">DocuNotes</p>
               <p className="mt-1 text-xs text-muted-foreground">Transcript to study guide</p>
             </div>
+          </div>
+          <div className="text-right text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">${credits === null ? "—" : credits.toFixed(2)}</span> credits left
           </div>
           <div className="hidden items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex">
             <span className="size-1.5 rounded-full bg-emerald-500" />
