@@ -325,6 +325,18 @@ function splitTranscript(transcript: string, requestedChunks: number): string[] 
   })
 }
 
+export function estimateInputTokens(text: string): number {
+  return Math.ceil(text.length / 3.6)
+}
+
+function getChunkContext(transcript: string, chunkIndex: number, requestedChunks: number): string {
+  const words = transcript.trim().split(/\s+/).filter(Boolean)
+  const contextWords = 120
+  const start = Math.max(0, Math.floor(chunkIndex * words.length / requestedChunks) - contextWords)
+  const end = Math.min(words.length, Math.floor((chunkIndex + 1) * words.length / requestedChunks) + contextWords)
+  return words.slice(start, end).join(" ")
+}
+
 // HTML markup (nested <ul>/<li> tags) and hidden reasoning tokens both eat into
 // max_output_tokens well beyond the visible word count, so budget generously here
 // rather than tightly — a truncated response is far more disruptive than an
@@ -345,7 +357,6 @@ async function submitBackgroundChunk(
   let lastError = "OpenAI did not accept the background request"
   // Keep the source details available for both the draft and correction passes.
   // Sampling here can remove the very material needed to reach the length target.
-  const chunkTranscript = transcript
   const targetRange = `${targetWords} to ${Math.ceil(targetWords * 1.08)}`
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -353,7 +364,7 @@ async function submitBackgroundChunk(
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
         model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
         instructions: SYSTEM_PROMPT,
-        input: `${buildUserPrompt(chunkTranscript, pages, targetWords)}\n\nThis is writing allocation ${part} of ${total} for ONE continuous document. Only facts stated inside the FOCUS EXCERPT may appear in this allocation. The entire transcript above is context only for resolving definitions, pronouns, and connections; never turn material outside the focus excerpt into a note. If a fact is repeated in the transcript, include it only in the allocation whose focus excerpt contains its first occurrence and omit later repetitions. Classify deadlines, assessments, reminders, logistics, housekeeping, and schedule changes only as announcements beneath the Reminder heading. Classify instructional subject matter, definitions, explanations, examples, equations, and formulas only as lecture content. Never place the same fact in both groups. Use consistent specific topic headings across allocations, so related material can be merged. Do not invent a separate lecture, page title, introduction, or fixed number of topics for this allocation. Keep the required deeply nested format. Write ${targetRange} visible words. The application handles pagination after combining all allocations.\n\nFOCUS EXCERPT START\n${focus}\nFOCUS EXCERPT END`,
+        input: `${buildUserPrompt(focus, pages, targetWords)}\n\nThis is writing allocation ${part} of ${total} for ONE continuous document. Only facts stated inside the FOCUS EXCERPT may appear in this allocation. The excerpt includes a small neighboring context window for resolving definitions, pronouns, and transitions. If a fact is repeated, include it only in the allocation containing its first occurrence. Classify deadlines, assessments, reminders, logistics, housekeeping, and schedule changes only as announcements beneath the Reminder heading. Classify instructional subject matter, definitions, explanations, examples, equations, and formulas only as lecture content. Never place the same fact in both groups. Use consistent specific topic headings across allocations, so related material can be merged. Do not invent a separate lecture, page title, introduction, or fixed number of topics for this allocation. Keep the required deeply nested format. Write ${targetRange} visible words. The application handles pagination after combining all allocations.\n\nFOCUS EXCERPT START\n${focus}\nFOCUS EXCERPT END`,
         text: { verbosity: "high" },
         reasoning: { effort: "none" },
         max_output_tokens: computeMaxOutputTokens(targetWords),
@@ -381,7 +392,7 @@ export async function startBackgroundNotes(transcript: string, pages: number): P
   return Promise.all(chunks.map(async (chunk, index) => {
     const pageSpan = Math.min(2, pageCount - index * 2)
     const targetWords = WORDS_PER_PAGE * pageSpan
-    const id = await submitBackgroundChunk(apiKey, transcript, pageSpan, index + 1, chunks.length, targetWords, chunk)
+    const id = await submitBackgroundChunk(apiKey, transcript, pageSpan, index + 1, chunks.length, targetWords, `${getChunkContext(transcript, index, chunks.length)}\n\n[PRIMARY ALLOCATION]\n${chunk}`)
     return { id, targetWords, pageNumber: index + 1, pageSpan, expanded: false, expansionAttempts: 0, retries: 0 }
   }))
 }

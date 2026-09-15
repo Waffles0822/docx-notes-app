@@ -120,10 +120,12 @@ test("21-page request creates 11 writing tasks and rejects short drafts", async 
   let jobs = await h.ai.startBackgroundNotes(transcript, 21)
   assert.equal(jobs.length, 11)
   assert.equal(jobs.reduce((sum, job) => sum + job.targetWords, 0), 6300)
-  // The middle of each chunk must remain in the source sent to the provider.
-  assert.ok(h.submissions.every(s => s.input.includes(`TRANSCRIPT START\n${transcript}\nTRANSCRIPT END`)))
-  const source = h.submissions.map(s => s.input.split("FOCUS EXCERPT START\n")[1].split("\nFOCUS EXCERPT END")[0]).join(" ")
-  assert.equal(source.split(/\s+/).length, 18530)
+  // The full transcript is no longer repeated; primary allocations still cover it all.
+  assert.ok(h.submissions.every(s => !s.input.includes(`TRANSCRIPT START\n${transcript}\nTRANSCRIPT END`)))
+  const source = h.submissions.map(s => s.input.split("[PRIMARY ALLOCATION]\n")[1].split("\n\nFOCUS EXCERPT END")[0]).join(" ")
+  const sourceWords = source.split(/\s+/)
+  assert.equal(new Set(sourceWords.filter(word => /^word\d+\.?$/.test(word))).size, 18530)
+  assert.ok(Array.from({ length: 18530 }, (_, index) => `word${index}${index % 20 === 19 ? "." : ""}`).every(word => source.includes(word)))
   for (let attempt = 0; attempt < 2; attempt++) {
     jobs.forEach(job => h.statuses.set(job.id, { notes: notes(40) }))
     const result = await (await h.poll(jobs)).json()
@@ -299,7 +301,7 @@ test("allocations keep full context and the original deep outline instructions",
   const source = "An early definition establishes the symbol. A later example applies that same symbol."
   await h.ai.startBackgroundNotes(source, 10)
   for (const request of h.submissions) {
-    assert.ok(request.input.includes(`TRANSCRIPT START\n${source}\nTRANSCRIPT END`))
+    assert.doesNotMatch(request.input, new RegExp(`TRANSCRIPT START\\n${source}\\nTRANSCRIPT END`))
     assert.match(request.input, /ONE continuous document/)
     assert.match(request.instructions, /three to four levels/)
     assert.doesNotMatch(request.input, /2-3 topic headings|exactly one page/)
