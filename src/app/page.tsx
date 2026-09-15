@@ -130,7 +130,7 @@ export default function Home() {
               onProcessingStart={() => { setDownloadedName(""); setGoogleDocsComplete(false); setErrorMessage(""); setGenerationProgress({ completed: 0, total: 1 }); setState("processing") }}
               onProgress={setGenerationProgress}
               onProcessingComplete={handleDownload}
-              onGoogleDocsComplete={() => { setGoogleDocsComplete(true); setErrorMessage(""); setState("result") }}
+              onGoogleDocsComplete={() => { setGoogleDocsComplete(true); setErrorMessage(""); setState("result"); refreshCredits() }}
               onError={(error) => { setErrorMessage(error); setState("error") }}
             />
           )}
@@ -182,7 +182,7 @@ export default function Home() {
                 onProcessingStart={() => { setErrorMessage(""); setState("processing") }}
                 onProgress={setGenerationProgress}
                 onProcessingComplete={handleDownload}
-                onGoogleDocsComplete={() => { setGoogleDocsComplete(true); setErrorMessage(""); setState("result") }}
+                onGoogleDocsComplete={() => { setGoogleDocsComplete(true); setErrorMessage(""); setState("result"); refreshCredits() }}
                 onError={(error) => setErrorMessage(error)}
               />
             </div>
