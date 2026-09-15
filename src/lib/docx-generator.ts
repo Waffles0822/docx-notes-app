@@ -220,12 +220,12 @@ export function buildNoteParagraphs(html: string, title = "", duration = ""): No
     { text: `Duration: ${duration.trim() || "N/A"}`, kind: "meta" },
     { text: "Click here to provide feedback", kind: "feedback" },
   ]
-  function bullets(items: Bullet[], level: number, boldParents: boolean) {
+  function bullets(items: Bullet[], level: number) {
     for (const bullet of items) {
       paragraphs.push({ text: bullet.text, kind: "bullet", level,
-        bold: boldParents && level === 0 && bullet.children.length > 0,
+        bold: false,
         keepNext: bullet.children.length > 0 })
-      bullets(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL), boldParents)
+      bullets(bullet.children, Math.min(level + 1, MAX_BULLET_LEVEL))
     }
   }
   function group(text: string, sections: SubSection[]) {
@@ -233,7 +233,7 @@ export function buildNoteParagraphs(html: string, title = "", duration = ""): No
     paragraphs.push({ text, kind: "group", keepNext: true })
     for (const section of sections) {
       paragraphs.push({ text: section.heading, kind: "subheading", keepNext: true })
-      bullets(section.bullets, 0, text === "LECTURE")
+      bullets(section.bullets, 0)
     }
   }
   group("ANNOUNCEMENTS", announcements)

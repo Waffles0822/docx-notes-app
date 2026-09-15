@@ -353,3 +353,14 @@ test("nested bullets use the historical circle hollow-circle square hierarchy in
   assert.ok(inserted.includes("Parent\n\tChild\n\t\tGrandchild\n"))
   assert.ok(requests.some(request => request.createParagraphBullets?.bulletPreset === "BULLET_DISC_CIRCLE_SQUARE"))
 })
+
+test("parent bullets remain compact and unbolded while section headers stay bold", () => {
+  const html = `<div class="notes"><section class="lecture"><h3>Controlled Act</h3><ul><li>Controlled Act and Delegation<ul><li>One supporting sentence.</li></ul></li><li>A standalone point uses one sentence.</li></ul></section></div>`
+  const paragraphs = docx.buildNoteParagraphs(html)
+  const parent = paragraphs.find(paragraph => paragraph.text === "Controlled Act and Delegation")
+  const standalone = paragraphs.find(paragraph => paragraph.text === "A standalone point uses one sentence.")
+  const header = paragraphs.find(paragraph => paragraph.text === "Controlled Act")
+  assert.equal(parent.bold, false)
+  assert.equal(standalone.bold, false)
+  assert.equal(header.kind, "subheading")
+})
