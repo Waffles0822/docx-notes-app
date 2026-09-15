@@ -17,3 +17,9 @@ test("calculates remaining credits from starting credits and reported spend", ()
 test("never displays a negative remaining credit balance", () => {
   assert.equal(calculateRemainingCredits(4.96, 6), 0)
 })
+
+test("uses a smaller context window when an allocation has clean boundaries", async () => {
+  const { getAdaptiveContextWords } = loaded.exports
+  assert.equal(getAdaptiveContextWords("A complete sentence.\n\nAnother complete sentence."), 80)
+  assert.equal(getAdaptiveContextWords("An unfinished sentence"), 180)
+})

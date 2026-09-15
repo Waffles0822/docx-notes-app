@@ -39,9 +39,9 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    refreshCredits()
+    const initialRefresh = window.setTimeout(refreshCredits, 0)
     const interval = window.setInterval(refreshCredits, 60_000)
-    return () => window.clearInterval(interval)
+    return () => { window.clearTimeout(initialRefresh); window.clearInterval(interval) }
   }, [refreshCredits])
 
   const handleDownload = ({ file, downloadName }: { file: Blob; downloadName: string }) => {
