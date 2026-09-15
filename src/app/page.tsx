@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useState } from "react"
 import { AlertTriangle, BookOpen, BrainCircuit, CheckCircle2, Loader2, Sparkles } from "lucide-react"
 import FileUpload from "@/components/FileUpload"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -28,25 +28,9 @@ export default function Home() {
   const [downloadedName, setDownloadedName] = useState("")
   const [googleDocsComplete, setGoogleDocsComplete] = useState(false)
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress>({ completed: 0, total: 1 })
-  const [credits, setCredits] = useState<number | null>(null)
-  const [usedToday, setUsedToday] = useState<number | null>(null)
+  const [documentCost, setDocumentCost] = useState<number | null>(null)
 
-  const refreshCredits = useCallback(async () => {
-    try {
-      const response = await fetch("/api/credits", { cache: "no-store" })
-      const data = await response.json()
-      if (data.available && typeof data.remaining === "number") setCredits(data.remaining)
-      if (data.available && typeof data.usedToday === "number") setUsedToday(data.usedToday)
-    } catch {}
-  }, [])
-
-  useEffect(() => {
-    const initialRefresh = window.setTimeout(refreshCredits, 0)
-    const interval = window.setInterval(refreshCredits, 60_000)
-    return () => { window.clearTimeout(initialRefresh); window.clearInterval(interval) }
-  }, [refreshCredits])
-
-  const handleDownload = ({ file, downloadName }: { file: Blob; downloadName: string }) => {
+  const handleDownload = ({ file, downloadName, estimatedCostUsd }: { file: Blob; downloadName: string; estimatedCostUsd?: number }) => {
     const url = URL.createObjectURL(file)
     const link = document.createElement("a")
     link.href = url
@@ -58,7 +42,7 @@ export default function Home() {
     setDownloadedName(downloadName)
     setState("result")
     setErrorMessage("")
-    refreshCredits()
+    setDocumentCost(typeof estimatedCostUsd === "number" ? estimatedCostUsd : null)
   }
 
   return (
@@ -73,10 +57,6 @@ export default function Home() {
               <p className="font-semibold leading-none tracking-tight">DocuNotes</p>
               <p className="mt-1 text-xs text-muted-foreground">Transcript to study guide</p>
             </div>
-          </div>
-          <div className="text-right text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">${credits === null ? "—" : credits.toFixed(2)}</span> credits left
-            <span className="ml-2">· ${usedToday === null ? "—" : usedToday.toFixed(2)} used today</span>
           </div>
           <div className="hidden items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs text-muted-foreground sm:flex">
             <span className="size-1.5 rounded-full bg-emerald-500" />
@@ -118,6 +98,7 @@ export default function Home() {
             <Alert className="mb-4 border-emerald-500/30 bg-emerald-500/5 text-emerald-800">
               <CheckCircle2 className="size-4 text-emerald-600" />
               <AlertDescription>Your download for {downloadedName} has started.</AlertDescription>
+              {documentCost !== null && <AlertDescription className="mt-1">Estimated API cost for this document: ${documentCost.toFixed(4)}</AlertDescription>}
             </Alert>
           )}
 
@@ -125,15 +106,16 @@ export default function Home() {
             <Alert className="mb-4 border-emerald-500/30 bg-emerald-500/5 text-emerald-800">
               <CheckCircle2 className="size-4 text-emerald-600" />
               <AlertDescription>The generated notes were written to your Google Doc.</AlertDescription>
+              {documentCost !== null && <AlertDescription className="mt-1">Estimated API cost for this document: ${documentCost.toFixed(4)}</AlertDescription>}
             </Alert>
           )}
 
           {(state === "upload" || state === "result") && (
             <FileUpload
-              onProcessingStart={() => { setDownloadedName(""); setGoogleDocsComplete(false); setErrorMessage(""); setGenerationProgress({ completed: 0, total: 1 }); setState("processing") }}
+              onProcessingStart={() => { setDownloadedName(""); setGoogleDocsComplete(false); setDocumentCost(null); setErrorMessage(""); setGenerationProgress({ completed: 0, total: 1 }); setState("processing") }}
               onProgress={setGenerationProgress}
               onProcessingComplete={handleDownload}
-              onGoogleDocsComplete={() => { setGoogleDocsComplete(true); setErrorMessage(""); setState("result"); refreshCredits() }}
+              onGoogleDocsComplete={(estimatedCostUsd) => { setGoogleDocsComplete(true); setErrorMessage(""); setDocumentCost(estimatedCostUsd ?? null); setState("result") }}
               onError={(error) => { setErrorMessage(error); setState("error") }}
             />
           )}
@@ -185,7 +167,7 @@ export default function Home() {
                 onProcessingStart={() => { setErrorMessage(""); setState("processing") }}
                 onProgress={setGenerationProgress}
                 onProcessingComplete={handleDownload}
-                onGoogleDocsComplete={() => { setGoogleDocsComplete(true); setErrorMessage(""); setState("result"); refreshCredits() }}
+                onGoogleDocsComplete={(estimatedCostUsd) => { setGoogleDocsComplete(true); setErrorMessage(""); setDocumentCost(estimatedCostUsd ?? null); setState("result") }}
                 onError={(error) => setErrorMessage(error)}
               />
             </div>

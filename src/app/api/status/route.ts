@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { expandBackgroundNotes, getBackgroundNoteStatus, getExpansionAttempts, MAX_EXPANSION_ATTEMPTS, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
 import { createNotesDocx, parseNotes, type Bullet } from "@/lib/docx-generator"
+import { estimateDocumentCost } from "@/lib/credits"
 
 type JobStatus = {
   id: string
@@ -32,6 +33,19 @@ function getJobProgress(status: string, truncated: boolean): number {
   if (status === "in_progress") return truncated ? 90 : 50
   if (status === "failed" || status === "cancelled" || status === "incomplete") return 0
   return 10 // queued/starting
+}
+
+function getEstimatedDocumentCost(statuses: Array<{ usage?: { input: number; cached: number; output: number } }>): number {
+  const usage = statuses.reduce((total, status) => ({
+    input: total.input + (status.usage?.input || 0),
+    cached: total.cached + (status.usage?.cached || 0),
+    output: total.output + (status.usage?.output || 0),
+  }), { input: 0, cached: 0, output: 0 })
+  return estimateDocumentCost(usage, {
+    input: Number(process.env.OPENAI_INPUT_COST_PER_1M || 0),
+    cached: Number(process.env.OPENAI_CACHED_INPUT_COST_PER_1M || 0),
+    output: Number(process.env.OPENAI_OUTPUT_COST_PER_1M || 0),
+  })
 }
 
 export async function POST(request: NextRequest) {
@@ -157,12 +171,14 @@ export async function POST(request: NextRequest) {
     const notes = paginated
       ? statuses.map((job, index) => `<article class="notes-page" data-page-span="${jobs[index].pageSpan ?? 1}">${mergeNoteSections([job.notes || ""])}</article>`).join("")
       : mergeNoteSections(statuses.map((job) => job.notes || ""))
+    const estimatedCostUsd = getEstimatedDocumentCost(statuses)
 
     if (returnNotesHtml) {
       return NextResponse.json({
         status: "completed",
         notesHtml: notes,
         downloadName,
+        estimatedCostUsd,
         progressPercent: 100,
       })
     }
@@ -174,6 +190,7 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`,
         "X-Download-Name": encodeURIComponent(downloadName),
+        "X-Estimated-Api-Cost": String(estimatedCostUsd),
         "Cache-Control": "no-store",
       },
     })

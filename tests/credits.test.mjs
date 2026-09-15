@@ -33,3 +33,8 @@ test("summarizes daily and total costs from OpenAI cost buckets", () => {
   assert.equal(result.total, 0.92)
   assert.equal(result.today, 0.12)
 })
+
+test("estimates a document cost from input, cached, and output tokens", () => {
+  const { estimateDocumentCost } = loaded.exports
+  assert.equal(estimateDocumentCost({ input: 1_000_000, cached: 500_000, output: 1_000_000 }, { input: 2, cached: 0.5, output: 8 }), 10.25)
+})

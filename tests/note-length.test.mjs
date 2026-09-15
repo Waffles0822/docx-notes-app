@@ -27,6 +27,7 @@ function loadModule(file, dependencies = {}, globals = {}) {
 }
 
 const docx = loadModule("src/lib/docx-generator.ts")
+const credits = loadModule("src/lib/credits.ts")
 const notes = words => `<div class="notes"><section class="lecture"><h3>Topic</h3><ul><li>${Array(words - 1).fill("detail").join(" ")}</li></ul></section></div>`
 
 function harness() {
@@ -50,7 +51,8 @@ function harness() {
       ...docx,
       createNotesDocx: async () => { exports++; return Buffer.from("docx") },
     },
-  })
+    "@/lib/credits": credits,
+  }, { process: { env: {} } })
   return {
     ai, submissions, statuses, exportCount: () => exports,
     poll: (jobs, html = true, pageCount) => route.POST({ json: async () => ({ jobs, returnNotesHtml: html, pageCount }) }),

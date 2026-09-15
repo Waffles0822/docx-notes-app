@@ -11,8 +11,8 @@ import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
 interface FileUploadProps {
   onProcessingStart: () => void
   onProgress: (progress: { completed: number; total: number; progressPercent?: number; jobStatuses?: Array<{ id: string; status: string; progress: number }> }) => void
-  onProcessingComplete: (result: { file: Blob; downloadName: string }) => void
-  onGoogleDocsComplete: () => void
+  onProcessingComplete: (result: { file: Blob; downloadName: string; estimatedCostUsd?: number }) => void
+  onGoogleDocsComplete: (estimatedCostUsd?: number) => void
   onError: (error: string) => void
 }
 
@@ -183,7 +183,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
             if (!useGdocs) {
               const outputFile = await statusResponse.blob()
               onProgress({ completed: jobs.length, total: jobs.length, progressPercent: 100 })
-              onProcessingComplete({ file: outputFile, downloadName })
+              onProcessingComplete({ file: outputFile, downloadName, estimatedCostUsd: Number(statusResponse.headers.get("X-Estimated-Api-Cost") || 0) })
               return
             }
             // If using Google Docs, generation may still be completing;
@@ -220,7 +220,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
             const exportResult = await exportResponse.json()
             if (!exportResponse.ok) throw new Error(exportResult.error || "Failed to write notes to Google Docs.")
             onProgress({ completed: jobs.length, total: jobs.length, progressPercent: 100 })
-            onGoogleDocsComplete()
+            onGoogleDocsComplete(typeof status.estimatedCostUsd === "number" ? status.estimatedCostUsd : undefined)
             return
           }
         } catch (pollError) {

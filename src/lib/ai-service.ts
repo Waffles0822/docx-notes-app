@@ -289,6 +289,7 @@ type BackgroundNoteStatus = {
   error?: string
   truncated?: boolean
   createdAt?: number
+  usage?: { input: number; cached: number; output: number }
 }
 
 export type BackgroundNoteJob = {
@@ -489,7 +490,17 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
 
   if (data.status === "completed") {
     try {
-      return { id, status: "completed", notes: cleanResponse(extractOutputText()), createdAt: data.created_at }
+      return {
+        id,
+        status: "completed",
+        notes: cleanResponse(extractOutputText()),
+        createdAt: data.created_at,
+        usage: {
+          input: Number(data.usage?.input_tokens || 0),
+          cached: Number(data.usage?.input_tokens_details?.cached_tokens || 0),
+          output: Number(data.usage?.output_tokens || 0),
+        },
+      }
     } catch (error) {
       return { id, status: "failed", error: error instanceof Error ? error.message : "OpenAI returned empty notes" }
     }

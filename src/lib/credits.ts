@@ -22,3 +22,10 @@ export function summarizeCosts(buckets: Array<{ start_time?: number; results?: A
     return summary
   }, { total: 0, today: 0 })
 }
+
+export function estimateDocumentCost(
+  usage: { input: number; cached: number; output: number },
+  rates: { input: number; cached: number; output: number }
+): number {
+  return Math.round((usage.input * rates.input + usage.cached * rates.cached + usage.output * rates.output) / 1_000_000 * 1_000_000) / 1_000_000
+}
