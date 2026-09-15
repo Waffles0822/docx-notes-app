@@ -112,6 +112,7 @@ test("allocation prompts restrict note content and classification to the focus e
     assert.match(request.input, /deadlines?.*announcements|announcements.*deadlines?/i)
     assert.match(request.input, /subject matter.*lecture|lecture.*subject matter/i)
     assert.doesNotMatch(request.instructions, /Housekeeping and Course Adjustments/i)
+    assert.match(request.instructions, /Never use generic parent labels such as Definition and Purpose/i)
   }
 })
 
