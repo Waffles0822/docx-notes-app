@@ -1,4 +1,8 @@
-const SYSTEM_PROMPT = `Create detailed study notes from the class transcript below at the requested length.
+const NESTED_PARENT_RULE = `STRUCTURAL CHECK FOR NESTED PARENTS: Whenever a first-level <li> contains a nested <ul>, its text before the nested <ul> must be only a two-to-six-word Title Case label. Never put a thesis, comparison, explanation, definition, evidence, or multiple clauses in that parent text. For example, this is invalid: <li>McLaughlin's argument challenges another thesis while aligning with a different view.<ul>...</ul></li>. Rewrite it as valid: <li>Views of Manhood<ul><li>McLaughlin's argument challenges another thesis while aligning with a different view.</li></ul></li>. Move the entire substantive sentence into a child bullet and validate every nested first-level bullet against this rule before returning HTML.`
+
+const SYSTEM_PROMPT = `${NESTED_PARENT_RULE}
+
+Create detailed study notes from the class transcript below at the requested length.
 
 Include only important information, definitions, explanations, examples, announcements, equations, and formulas explicitly given in the transcript. Remove filler words, side conversations, jokes, repetitions, greetings, and off-topic comments. Preserve factual accuracy and do not add, infer, complete, or supplement information that was not discussed. Every note must be directly traceable to the supplied transcript. Develop the supplied material thoroughly. Explain the meaning of each concept, the relationships stated in the source, and each step of supplied examples in complete sentences. Do not collapse an explanation into a terse label or invent facts to increase length.
 
@@ -290,6 +294,7 @@ type BackgroundNoteStatus = {
   truncated?: boolean
   createdAt?: number
   usage?: { input: number; cached: number; output: number }
+  sourceInput?: string
 }
 
 export type BackgroundNoteJob = {
@@ -360,7 +365,7 @@ async function submitBackgroundChunk(
   part: number,
   total: number,
   targetWords: number,
-  focus: string
+  focus: string,
 ): Promise<string> {
   let lastError = "OpenAI did not accept the background request"
   // Keep the source details available for both the draft and correction passes.
@@ -445,10 +450,10 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
   return { ...job, id: data.id, retries: (job.retries || 0) + 1 }
 }
 
-export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords: number, wasTruncated = false): Promise<BackgroundNoteJob> {
+export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords: number, wasTruncated = false, sourceInput = ""): Promise<BackgroundNoteJob> {
   const input = wasTruncated
-    ? `The previous response was cut off before it finished (it ran out of output budget) and may contain broken or incomplete HTML. Ignore its broken tail and return a complete, well-formed replacement HTML document covering the same transcript material, using the same section structure. Write ${job.targetWords} to ${Math.ceil(job.targetWords * 1.08)} visible words. Develop complete explanations instead of short labels. Preserve the specific topic headings and deep nesting of the continuous document. Use the entire transcript as context, but retain the original focus allocation and do not repeat facts belonging to other allocations. Check the word count before returning the replacement.`
-    : `The notes contain about ${currentWords} words, below the ${job.targetWords}-word target. Return a complete replacement HTML document. Expand only by recovering concrete definitions, explanations, analogy mappings, examples, steps, equations, formulas, announcements, and distinctions that were explicitly present in the original transcript but omitted from the notes. Remove vague or generic statements, filler transitions, and routine classroom commentary. Do not repeat ideas or introduce outside knowledge. Write ${job.targetWords} to ${Math.ceil(job.targetWords * 1.08)} visible words. Develop complete explanations instead of short labels. Preserve the specific topic headings and deep nesting of the continuous document. Use the entire transcript as context, but retain the original focus allocation and do not repeat facts belonging to other allocations. Check the word count before returning the replacement.`
+    ? `The previous response was cut off before it finished and may contain broken or incomplete HTML. Return a complete, well-formed replacement HTML document covering the same transcript material. Recover omitted source details before expanding phrasing. Write ${job.targetWords} to ${Math.ceil(job.targetWords * 1.08)} visible words. Preserve the specific topic headings and deep nesting. Do not repeat facts or add outside knowledge. Check the word count before returning the replacement.${sourceInput ? `\n\nORIGINAL SOURCE CONTEXT\n${sourceInput}` : ""}`
+    : `The notes contain about ${currentWords} words, below the ${job.targetWords}-word target. Return a complete replacement HTML document. Recover additional concrete definitions, explanations, analogy mappings, examples, steps, equations, formulas, announcements, and distinctions from the ORIGINAL SOURCE CONTEXT below. Prioritize omitted source details before expanding phrasing. Remove vague statements, filler transitions, and routine classroom commentary. Do not repeat ideas or introduce outside knowledge. Write ${job.targetWords} to ${Math.ceil(job.targetWords * 1.08)} visible words. Preserve the specific topic headings and deep nesting. Check the word count before returning the replacement.${sourceInput ? `\n\nORIGINAL SOURCE CONTEXT\n${sourceInput}` : ""}`
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
     model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
@@ -457,7 +462,7 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
     input,
     text: { verbosity: "high" },
     reasoning: { effort: "none" },
-    max_output_tokens: computeMaxOutputTokens(job.targetWords * (wasTruncated ? 1.5 : 1)),
+    max_output_tokens: computeMaxOutputTokens(job.targetWords * (wasTruncated ? 2 : 1.5)),
     background: true,
   }, 60000)
   if (!response.ok || !data?.id) {
@@ -494,6 +499,7 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
         id,
         status: "completed",
         notes: cleanResponse(extractOutputText()),
+        sourceInput: typeof data.input === "string" ? data.input : undefined,
         createdAt: data.created_at,
         usage: {
           input: Number(data.usage?.input_tokens || 0),

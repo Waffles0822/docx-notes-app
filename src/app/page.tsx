@@ -1,11 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { AlertTriangle, BookOpen, BrainCircuit, CheckCircle2, Loader2, Sparkles } from "lucide-react"
 import FileUpload from "@/components/FileUpload"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
+import LoginGate from "@/components/LoginGate"
 
 type AppState = "upload" | "processing" | "error" | "result"
 
@@ -23,12 +24,20 @@ const benefits = [
 ]
 
 export default function Home() {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null)
   const [state, setState] = useState<AppState>("upload")
   const [errorMessage, setErrorMessage] = useState("")
   const [downloadedName, setDownloadedName] = useState("")
   const [googleDocsComplete, setGoogleDocsComplete] = useState(false)
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress>({ completed: 0, total: 1 })
   const [documentCost, setDocumentCost] = useState<number | null>(null)
+
+  useEffect(() => {
+    fetch("/api/auth/session").then((response) => response.json()).then((data) => setAuthenticated(data.authenticated === true)).catch(() => setAuthenticated(false))
+  }, [])
+
+  if (authenticated === null) return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Loading…</div>
+  if (!authenticated) return <LoginGate onAuthenticated={() => setAuthenticated(true)} />
 
   const handleDownload = ({ file, downloadName, estimatedCostUsd }: { file: Blob; downloadName: string; estimatedCostUsd?: number }) => {
     const url = URL.createObjectURL(file)

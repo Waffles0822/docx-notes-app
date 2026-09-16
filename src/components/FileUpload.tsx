@@ -300,6 +300,7 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
           )}
         </div>
 
+
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
             <span className="flex size-5 items-center justify-center rounded-md bg-primary/10">2</span>

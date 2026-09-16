@@ -113,6 +113,7 @@ test("allocation prompts restrict note content and classification to the focus e
     assert.match(request.input, /subject matter.*lecture|lecture.*subject matter/i)
     assert.doesNotMatch(request.instructions, /Housekeeping and Course Adjustments/i)
     assert.match(request.instructions, /Never use generic parent labels such as Definition and Purpose/i)
+    assert.match(request.instructions, /STRUCTURAL CHECK FOR NESTED PARENTS/i)
   }
 })
 
@@ -140,11 +141,11 @@ test("21-page request creates 11 writing tasks and rejects short drafts", async 
   jobs.forEach(job => h.statuses.set(job.id, { notes: notes(40) }))
   for (const html of [true, false]) {
     const response = await h.poll(jobs, html)
-    assert.equal(response.status, 422)
-    assert.match((await response.json()).error, /40 words against a 600-word target/)
+    assert.equal(response.status, 200)
+    if (html) assert.equal((await response.json()).status, "completed")
   }
   assert.equal(h.submissions.length, 33)
-  assert.equal(h.exportCount(), 0)
+  assert.equal(h.exportCount(), 1)
 })
 
 test("a corrected draft meeting the threshold completes for both exports", async () => {

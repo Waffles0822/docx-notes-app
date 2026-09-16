@@ -147,15 +147,14 @@ export async function POST(request: NextRequest) {
     const needsExpansion = jobs.map((job, index) => Boolean(statuses[index].truncated)
       || wordCounts[index] < Math.ceil(job.targetWords * targetRatio))
     const exhaustedIndex = jobs.findIndex((job, index) => needsExpansion[index] && getExpansionAttempts(job) >= MAX_EXPANSION_ATTEMPTS)
-    if (exhaustedIndex !== -1) {
-      const error = statuses[exhaustedIndex].truncated
-        ? "A note section is still cut off after two automatic corrections. Please try generating again."
-        : `A note section contains only ${wordCounts[exhaustedIndex]} words against a ${jobs[exhaustedIndex].targetWords}-word target after two automatic corrections. The requested length could not be reached. Try again or choose fewer pages if the transcript contains limited unique material.`
-      return NextResponse.json({ error }, { status: 422 })
+    if (exhaustedIndex !== -1 && statuses[exhaustedIndex].truncated) {
+      return NextResponse.json({ error: "A note section is still cut off after two automatic corrections. Please try generating again." }, { status: 422 })
     }
-    if (needsExpansion.some(Boolean)) {
+    if (needsExpansion.some((needed, index) => needed && getExpansionAttempts(jobs[index]) < MAX_EXPANSION_ATTEMPTS)) {
       const updatedJobs = await Promise.all(jobs.map((job, index) =>
-        needsExpansion[index] ? expandBackgroundNotes(job, wordCounts[index], statuses[index].truncated) : job
+        needsExpansion[index] && getExpansionAttempts(job) < MAX_EXPANSION_ATTEMPTS
+          ? expandBackgroundNotes(job, wordCounts[index], statuses[index].truncated, statuses[index].sourceInput)
+          : job
       ))
       return NextResponse.json({
         status: "processing",
