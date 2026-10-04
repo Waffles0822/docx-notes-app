@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { expandBackgroundNotes, getBackgroundNoteStatus, getExpansionAttempts, MAX_EXPANSION_ATTEMPTS, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
-import { createNotesDocx, parseNotes, type Bullet } from "@/lib/docx-generator"
+import { expandBackgroundNotes, getBackgroundNoteStatus, getExpansionAttempts, groupTopicHeadings, MAX_EXPANSION_ATTEMPTS, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
+import { applyTopicGroups, createNotesDocx, parseNotes, type Bullet } from "@/lib/docx-generator"
 import { estimateDocumentCost } from "@/lib/credits"
 
 type JobStatus = {
@@ -168,10 +168,16 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const notes = paginated
+    const combined = paginated
       ? statuses.map((job, index) => `<article class="notes-page" data-page-span="${jobs[index].pageSpan ?? 1}">${mergeNoteSections([job.notes || ""])}</article>`).join("")
       : mergeNoteSections(statuses.map((job) => job.notes || ""))
-    const estimatedCostUsd = getEstimatedDocumentCost(statuses)
+    // Allocations name topics independently, so fold related sub-headers into one heading.
+    const grouping = await groupTopicHeadings(parseNotes(combined).lecture.map((section) => ({
+      heading: section.heading,
+      labels: section.bullets.map((bullet) => bullet.text),
+    })))
+    const notes = applyTopicGroups(combined, grouping.groups)
+    const estimatedCostUsd = getEstimatedDocumentCost([...statuses, { usage: grouping.usage }])
 
     if (returnNotesHtml) {
       return NextResponse.json({

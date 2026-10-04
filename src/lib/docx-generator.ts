@@ -140,10 +140,36 @@ function extractGroupSection(html: string, cls: "announcements" | "lecture"): Su
   return Array.from(matches).flatMap((match) => extractSubsections(match[1]))
 }
 
+// Headings that differ only by case, punctuation, or a leading article name the same topic.
+function topicKey(heading: string): string {
+  return heading.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/^(the|an|a) /, "")
+}
+
+export type TopicGroup = {
+  heading: string
+  members: string[]
+}
+
+// Renames lecture sub-headers to their group heading, so mergeTopics folds every
+// member of a group into one section. Rewriting the HTML keeps both exports in sync.
+export function applyTopicGroups(html: string, groups: TopicGroup[]): string {
+  const renames = new Map<string, string>()
+  for (const group of groups) {
+    for (const member of group.members) renames.set(topicKey(member), group.heading)
+  }
+  if (!renames.size) return html
+  const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  return html.replace(/(<section[^>]*class=["']lecture["'][^>]*>)([\s\S]*?)(<\/section>)/gi, (_, open, body, close) =>
+    open + body.replace(/<h([34])([^>]*)>([\s\S]*?)<\/h\1>/gi, (heading: string, level: string, attrs: string, text: string) => {
+      const target = renames.get(topicKey(normalizeNoteText(text)))
+      return target ? `<h${level}${attrs}>${escape(target)}</h${level}>` : heading
+    }) + close)
+}
+
 function mergeTopics(sections: SubSection[]): SubSection[] {
   const topics = new Map<string, SubSection>()
   for (const section of sections) {
-    const key = section.heading.toLowerCase().replace(/\s+/g, " ").trim()
+    const key = topicKey(section.heading)
     const existing = topics.get(key)
     if (existing) existing.bullets.push(...section.bullets)
     else topics.set(key, { ...section, bullets: [...section.bullets] })
