@@ -24,7 +24,7 @@ Use a parent bullet for each reminder and nested bullets for its date, coverage,
 </ul>
 
 SUB-HEADERS
-Within the lecture group only, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Clean Air Act, Photosynthesis, Pollution Management). Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
+Within the lecture group only, identify the distinct topics discussed, in the order they appear in the transcript, and give each its own sub-header naming that specific topic (for example Clean Air Act, Photosynthesis, Pollution Management). Keep sub-headers broad enough that closely related subtopics share one sub-header, with each subtopic written as a first-level parent bullet beneath it rather than as a sub-header of its own. Never use generic sub-header names such as Important Information, Supporting Details, Key Takeaways, or Other Notes. Sub-headers use Title Case, capitalizing major words but not articles, conjunctions, or prepositions unless they are the first word, and must not end with a period.
 
 BULLETS AND NESTING
 Build a deep, richly nested outline rather than a flat list. Whenever a point carries its own supporting context, description, elaboration, condition, example, breakdown, enumeration, criterion, step, figure, or consequence, place that material in bullets nested underneath it instead of as a sibling beside it. Every level of nesting must sit under the specific bullet it explains. Prefer three to four levels of depth wherever the transcript supports it, and use the deepest level for granular details such as individual figures, named items, list members, and qualifiers. Only leave a bullet unnested when the transcript truly gives no supporting detail for it.
@@ -535,6 +535,102 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
 function extractSectionHtml(html: string, cls: "announcements" | "lecture"): string {
   const sections = new RegExp(`<section[^>]*class=["']${cls}["'][^>]*>([\\s\\S]*?)<\\/section>`, "gi")
   return Array.from(html.matchAll(sections), (match) => match[1].trim()).join("")
+}
+
+export type TopicOutline = {
+  heading: string
+  labels: string[]
+}
+
+export type TopicGroupingResult = {
+  groups: { heading: string; members: string[] }[]
+  usage?: { input: number; cached: number; output: number }
+}
+
+const TOPIC_GROUPING_PROMPT = `The lecture notes below were written in separate allocations, so related material is spread across many sub-headers. Group the sub-headers that cover the same topic or fall in the same subject category under one shared sub-header, so the final document has fewer headings.
+
+Keep sub-headers on genuinely different topics in separate groups. Do not force unrelated topics together and do not create catch-all groups. Name each group with a specific Title Case sub-header for the subject it covers, reusing an existing sub-header when it already names the whole group. Never use generic names such as Overview, Key Points, Miscellaneous, Other Topics, Important Information, Supporting Details, Key Takeaways, or Other Notes, and never use colons. List each original sub-header exactly as written, in exactly one group.`
+
+const GENERIC_GROUP_HEADING = /^(overview|key points|miscellaneous|misc|other|other topics|other notes|general|general topics|important information|supporting details|key takeaways|additional topics)$/i
+
+// Asks the model which lecture sub-headers belong together. Any failure leaves the
+// notes as written, since grouping only tidies headings and must never block export.
+export async function groupTopicHeadings(topics: TopicOutline[]): Promise<TopicGroupingResult> {
+  if (topics.length < 2) return { groups: [] }
+  const outline = topics.map((topic, index) =>
+    `${index + 1}. ${topic.heading}\n${topic.labels.slice(0, 12).map((label) => `   - ${label.slice(0, 120)}`).join("\n")}`
+  ).join("\n")
+
+  try {
+    const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
+      model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+      instructions: TOPIC_GROUPING_PROMPT,
+      input: `SUB-HEADERS IN DOCUMENT ORDER, EACH WITH ITS FIRST-LEVEL BULLETS\n${outline}`,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "topic_groups",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              groups: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    heading: { type: "string" },
+                    members: { type: "array", items: { type: "string" } },
+                  },
+                  required: ["heading", "members"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["groups"],
+            additionalProperties: false,
+          },
+        },
+      },
+      reasoning: { effort: "none" },
+      max_output_tokens: 4000,
+      store: false,
+    }, 25000)
+    if (!response.ok) return { groups: [] }
+
+    const outputText = data.output_text || data.output
+      ?.flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content || [])
+      .filter((item: { type?: string }) => item.type === "output_text")
+      .map((item: { text?: string }) => item.text || "").join("")
+    const usage = {
+      input: Number(data.usage?.input_tokens || 0),
+      cached: Number(data.usage?.input_tokens_details?.cached_tokens || 0),
+      output: Number(data.usage?.output_tokens || 0),
+    }
+    let parsed: { groups?: unknown }
+    try {
+      parsed = JSON.parse(outputText || "{}")
+    } catch {
+      return { groups: [], usage }
+    }
+
+    // Only trust members that name a real sub-header, each claimed by one group.
+    const known = new Set(topics.map((topic) => topic.heading))
+    const claimed = new Set<string>()
+    const groups = (Array.isArray(parsed.groups) ? parsed.groups : []).flatMap((group: { heading?: unknown; members?: unknown }) => {
+      const heading = typeof group.heading === "string"
+        ? group.heading.replace(/<[^>]*>|:/g, "").replace(/\s+/g, " ").trim()
+        : ""
+      if (!heading || heading.length > 80 || GENERIC_GROUP_HEADING.test(heading)) return []
+      const members = (Array.isArray(group.members) ? group.members : [])
+        .filter((member): member is string => typeof member === "string" && known.has(member) && !claimed.has(member))
+      members.forEach((member) => claimed.add(member))
+      return members.length && !(members.length === 1 && members[0] === heading) ? [{ heading, members }] : []
+    })
+    return { groups, usage }
+  } catch {
+    return { groups: [] }
+  }
 }
 
 export function mergeNoteSections(outputs: string[]): string {

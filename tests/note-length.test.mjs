@@ -30,13 +30,19 @@ const docx = loadModule("src/lib/docx-generator.ts")
 const credits = loadModule("src/lib/credits.ts")
 const notes = words => `<div class="notes"><section class="lecture"><h3>Topic</h3><ul><li>${Array(words - 1).fill("detail").join(" ")}</li></ul></section></div>`
 
-function harness() {
+function harness(grouping = { groups: [] }) {
   const submissions = []
+  const groupingRequests = []
   const statuses = new Map()
   const ai = loadModule("src/lib/ai-service.ts", {}, {
     process: { env: { OPENAI_API_KEY: "mock-only" } },
     fetch: async (_url, options) => {
-      submissions.push(JSON.parse(options.body))
+      const body = JSON.parse(options.body)
+      if (body.text?.format?.name === "topic_groups") {
+        groupingRequests.push(body)
+        return Response.json({ output_text: JSON.stringify(grouping) })
+      }
+      submissions.push(body)
       return Response.json({ id: `resp_mock${submissions.length}` })
     },
   })
@@ -54,7 +60,7 @@ function harness() {
     "@/lib/credits": credits,
   }, { process: { env: {} } })
   return {
-    ai, submissions, statuses, exportCount: () => exports,
+    ai, submissions, groupingRequests, statuses, exportCount: () => exports,
     poll: (jobs, html = true, pageCount) => route.POST({ json: async () => ({ jobs, returnNotesHtml: html, pageCount }) }),
   }
 }
@@ -365,4 +371,48 @@ test("parent bullets remain compact and unbolded while section headers stay bold
   assert.equal(parent.bold, false)
   assert.equal(standalone.bold, false)
   assert.equal(header.kind, "subheading")
+})
+
+test("related topics from separate allocations are grouped under one heading in both exports", async () => {
+  const h = harness({ groups: [
+    { heading: "Clean Air Act", members: ["Clean Air Act", "Clean Air Act Amendments", "Invented Heading"] },
+    { heading: "Overview", members: ["Photosynthesis"] },
+  ] })
+  const section = (heading, parent, detail) => `<section class="lecture"><h3>${heading}</h3><ul><li>${parent}<ul><li>${detail} ${Array(298).fill("detail").join(" ")}</li></ul></li></ul></section>`
+  const jobs = [
+    { id: "resp_first", targetWords: 600, pageNumber: 1, pageSpan: 2, expanded: false },
+    { id: "resp_second", targetWords: 300, pageNumber: 2, pageSpan: 1, expanded: false },
+  ]
+  h.statuses.set("resp_first", { notes: `<div class="notes">${section("Clean Air Act", "Regulated Pollutants", "Ozone")}${section("Photosynthesis", "Light Reactions", "Chlorophyll")}</div>` })
+  h.statuses.set("resp_second", { notes: `<div class="notes">${section("Clean Air Act Amendments", "Emission Limits", "Sulfur")}</div>` })
+
+  const result = await (await h.poll(jobs, true, 3)).json()
+  assert.equal(result.status, "completed")
+  assert.equal(h.groupingRequests.length, 1)
+  assert.match(h.groupingRequests[0].input, /Clean Air Act Amendments\n {3}- Emission Limits/)
+  const lecture = docx.parseNotes(result.notesHtml).lecture
+  assert.deepEqual(Array.from(lecture, s => s.heading), ["Clean Air Act", "Photosynthesis"])
+  assert.deepEqual(Array.from(lecture[0].bullets, b => b.text), ["Regulated Pollutants", "Emission Limits"])
+  const googleDocs = loadModule("src/lib/google-docs.ts")
+  const text = googleDocs.buildDocRequests(result.notesHtml, "", "", 1).find(r => r.insertText).insertText.text
+  assert.equal((text.match(/^Clean Air Act$/gm) || []).length, 1)
+  assert.ok(!text.includes("Clean Air Act Amendments"))
+})
+
+test("a failed grouping response leaves the generated headings intact", async () => {
+  const h = harness({ groups: "not a list" })
+  const html = `<div class="notes">${notes(300)}${notes(300).replace("Topic", "Second")}</div>`
+  const jobs = [{ id: "resp_ungrouped", targetWords: 600, pageNumber: 1, pageSpan: 2, expanded: false }]
+  h.statuses.set("resp_ungrouped", { notes: html })
+  const result = await (await h.poll(jobs, true, 2)).json()
+  assert.equal(result.status, "completed")
+  assert.deepEqual(Array.from(docx.parseNotes(result.notesHtml).lecture, s => s.heading), ["Topic", "Second"])
+})
+
+test("headings differing only by case, punctuation, or a leading article merge", () => {
+  const html = `<div class="notes"><section class="lecture"><h3>The Water Cycle</h3><ul><li>Evaporation</li></ul><h3>water cycle.</h3><ul><li>Condensation</li></ul></section></div>`
+  const lecture = docx.parseNotes(html).lecture
+  assert.equal(lecture.length, 1)
+  assert.equal(lecture[0].heading, "The Water Cycle")
+  assert.equal(lecture[0].bullets.length, 2)
 })
