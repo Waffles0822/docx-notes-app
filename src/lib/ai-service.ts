@@ -375,7 +375,7 @@ async function submitBackgroundChunk(
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-        model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+        model: process.env.OPENAI_MODEL || "gpt-6-luna",
         prompt_cache_key: process.env.OPENAI_PROMPT_CACHE_KEY || "docunotes-notes-v1",
         instructions: SYSTEM_PROMPT,
         input: `${buildUserPrompt(focus, pages, targetWords)}\n\nThis is writing allocation ${part} of ${total} for ONE continuous document. Only facts stated inside the FOCUS EXCERPT may appear in this allocation. The excerpt includes a small neighboring context window for resolving definitions, pronouns, and transitions. If a fact is repeated, include it only in the allocation containing its first occurrence. Classify deadlines, assessments, reminders, logistics, housekeeping, and schedule changes only as announcements beneath the Reminder heading. Classify instructional subject matter, definitions, explanations, examples, equations, and formulas only as lecture content. Never place the same fact in both groups. Use consistent specific topic headings across allocations, so related material can be merged. Do not invent a separate lecture, page title, introduction, or fixed number of topics for this allocation. Keep the required deeply nested format. Write ${targetRange} visible words. The application handles pagination after combining all allocations.\n\nFOCUS EXCERPT START\n${focus}\nFOCUS EXCERPT END`,
@@ -423,7 +423,7 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
   }
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-    model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+    model: process.env.OPENAI_MODEL || "gpt-6-luna",
     instructions: source.data.instructions || SYSTEM_PROMPT,
     input: source.data.input,
     text: { verbosity: "high" },
@@ -456,7 +456,7 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
     : `The notes contain about ${currentWords} words, below the ${job.targetWords}-word target. Return a complete replacement HTML document. Recover additional concrete definitions, explanations, analogy mappings, examples, steps, equations, formulas, announcements, and distinctions from the ORIGINAL SOURCE CONTEXT below. Prioritize omitted source details before expanding phrasing. Remove vague statements, filler transitions, and routine classroom commentary. Do not repeat ideas or introduce outside knowledge. Write ${job.targetWords} to ${Math.ceil(job.targetWords * 1.08)} visible words. Preserve the specific topic headings and deep nesting. Check the word count before returning the replacement.${sourceInput ? `\n\nORIGINAL SOURCE CONTEXT\n${sourceInput}` : ""}`
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
-    model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+    model: process.env.OPENAI_MODEL || "gpt-6-luna",
     previous_response_id: job.id,
     instructions: SYSTEM_PROMPT,
     input,
@@ -563,7 +563,7 @@ export async function groupTopicHeadings(topics: TopicOutline[]): Promise<TopicG
 
   try {
     const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", getOpenAIKey(), {
-      model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+      model: process.env.OPENAI_MODEL || "gpt-6-luna",
       instructions: TOPIC_GROUPING_PROMPT,
       input: `SUB-HEADERS IN DOCUMENT ORDER, EACH WITH ITS FIRST-LEVEL BULLETS\n${outline}`,
       text: {
@@ -660,7 +660,7 @@ function createOpenAIService(apiKey: string): AIService {
     async generateNotes(transcript: string, pages: number): Promise<string> {
       const source = truncateTranscript(transcript, 400000)
       const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
-        model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+        model: process.env.OPENAI_MODEL || "gpt-6-luna",
         instructions: SYSTEM_PROMPT,
         input: `${buildUserPrompt(source, pages)}\n\nDo not include vague bridge statements, generic classroom filler, or administrative remarks unless they carry a concrete instruction or fact.`,
         text: { verbosity: "high" },
