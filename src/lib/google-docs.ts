@@ -164,7 +164,7 @@ export function buildDocRequests(notesHtml: string, title: string, duration: str
   let index = 1
   const textContent = paragraphs.map((paragraph) => {
     const tabs = paragraph.kind === "bullet" ? "\t".repeat(paragraph.level || 0) : ""
-    const line = `${tabs}${normalizeMathInProse(paragraph.text)}\n`
+    const line = `${tabs}${paragraph.kind === "divider" ? paragraph.text : normalizeMathInProse(paragraph.text)}\n`
     indexed.push({
       ...paragraph,
       startIndex: index,
@@ -214,16 +214,9 @@ export function buildDocRequests(notesHtml: string, title: string, duration: str
     } else if (paragraph.kind === "subheading") {
       paragraphStyle = { lineSpacing: 100, spaceAbove: pt(7), spaceBelow: pt(2), keepWithNext: true }
     } else if (paragraph.kind === "feedback") {
-      paragraphStyle = {
-        lineSpacing: 100,
-        spaceBelow: pt(8),
-        borderBottom: {
-        color: { color: { rgbColor: { red: 0.67, green: 0.67, blue: 0.67 } } },
-        width: pt(0.75),
-        padding: pt(6),
-        dashStyle: "SOLID",
-        },
-      }
+      paragraphStyle = { lineSpacing: 100, spaceBelow: pt(2) }
+    } else if (paragraph.kind === "divider") {
+      paragraphStyle = { lineSpacing: 100, spaceBelow: pt(8) }
     }
 
     if (paragraph.pageBreakBefore || paragraph.kind === "bullet") {
@@ -263,6 +256,16 @@ export function buildDocRequests(notesHtml: string, title: string, duration: str
             underline: true,
           },
           fields: "foregroundColor,underline",
+        },
+      })
+    }
+
+    if (paragraph.kind === "divider") {
+      requests.push({
+        updateTextStyle: {
+          range: { startIndex: paragraph.textStartIndex, endIndex: paragraph.endIndex - 1 },
+          textStyle: { foregroundColor: { color: { rgbColor: { red: 0.67, green: 0.67, blue: 0.67 } } } },
+          fields: "foregroundColor",
         },
       })
     }

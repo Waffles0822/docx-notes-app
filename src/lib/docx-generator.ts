@@ -1,4 +1,4 @@
-import { AlignmentType, BorderStyle, Document, LevelFormat, Packer, Paragraph, TextRun } from "docx"
+import { AlignmentType, Document, LevelFormat, Packer, Paragraph, TextRun } from "docx"
 import { buildRichRuns, normalizeMathInProse } from "./math-format"
 
 export type Bullet = {
@@ -230,7 +230,7 @@ function buildBulletLevels() {
 
 export type NoteParagraph = {
   text: string
-  kind: "meta" | "feedback" | "group" | "subheading" | "bullet"
+  kind: "meta" | "feedback" | "divider" | "group" | "subheading" | "bullet"
   level?: number
   bold?: boolean
   keepNext?: boolean
@@ -239,12 +239,18 @@ export type NoteParagraph = {
 
 // Both exports consume this single outline. Writing allocations supply a length
 // budget; they must never create repeated document groups or independent lectures.
+// The separator under the feedback line is real text rather than a paragraph border,
+// because most apps drop paragraph borders when the notes are copied and pasted.
+// 72 Arial underscores fit one line on both the .docx and the Google Docs page width.
+export const DIVIDER_TEXT = "_".repeat(72)
+
 export function buildNoteParagraphs(html: string, title = "", duration = ""): NoteParagraph[] {
   const { announcements, lecture } = parseNotes(html)
   const paragraphs: NoteParagraph[] = [
     { text: `Title Name : ${normalizeMathInProse(title.trim() || "Untitled Class")}`, kind: "meta" },
     { text: `Duration: ${duration.trim() || "N/A"}`, kind: "meta" },
     { text: "Click here to provide feedback", kind: "feedback" },
+    { text: DIVIDER_TEXT, kind: "divider" },
   ]
   function bullets(items: Bullet[], level: number) {
     for (const bullet of items) {
@@ -274,19 +280,21 @@ export async function createNotesDocx(html: string, meta: NotesMeta = {}): Promi
     const group = item.kind === "group"
     const heading = group || item.kind === "subheading"
     const feedback = item.kind === "feedback"
+    const divider = item.kind === "divider"
     return new Paragraph({
       pageBreakBefore: item.pageBreakBefore,
       keepNext: item.keepNext,
       ...(item.kind === "bullet" ? { numbering: { reference: BULLET_REFERENCE, level: item.level || 0 } } : {}),
       spacing: {
-        before: group ? (index === 3 ? 0 : 200) : item.kind === "subheading" ? (outline[index - 1]?.kind === "group" ? 20 : 140) : 0,
-        after: feedback ? 160 : group ? 60 : heading || item.kind === "meta" ? 40 : 20,
-        line: heading || feedback || item.kind === "meta" ? 240 : 259,
+        before: group ? (outline[index - 1]?.kind === "divider" ? 0 : 200) : item.kind === "subheading" ? (outline[index - 1]?.kind === "group" ? 20 : 140) : 0,
+        after: divider ? 160 : group ? 60 : heading || feedback || item.kind === "meta" ? 40 : 20,
+        line: heading || feedback || divider || item.kind === "meta" ? 240 : 259,
       },
-      ...(feedback ? { border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "AAAAAA", space: 6 } } } : {}),
       children: feedback
         ? [new TextRun({ text: item.text, size: BODY_SIZE, font: FONT, color: "1155CC", underline: {} })]
-        : group
+        : divider
+          ? [new TextRun({ text: item.text, size: BODY_SIZE, font: FONT, color: "AAAAAA" })]
+          : group
           ? [new TextRun({ text: item.text, bold: true, underline: {}, size: GROUP_HEADING_SIZE, font: FONT })]
           : buildRichRuns(item.text, { font: FONT, size: BODY_SIZE, bold: heading || item.bold }),
     })

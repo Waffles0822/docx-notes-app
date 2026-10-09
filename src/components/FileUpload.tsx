@@ -7,108 +7,86 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
+import { GOOGLE_DOCS_URL_PATTERN, type NoteRequest } from "@/lib/note-generation"
+
+export type FileEntry = NoteRequest & { id: string }
+
+type UploadItem = FileEntry & {
+  estimate: { words: number; recommendedPages: number } | null
+  isAnalyzing: boolean
+  gdocsUrlError: string
+}
 
 interface FileUploadProps {
-  onProcessingStart: () => void
-  onProgress: (progress: { completed: number; total: number; progressPercent?: number; jobStatuses?: Array<{ id: string; status: string; progress: number }> }) => void
-  onProcessingComplete: (result: { file: Blob; downloadName: string; estimatedCostUsd?: number }) => void
-  onGoogleDocsComplete: (estimatedCostUsd?: number) => void
-  onError: (error: string) => void
+  // Resolves with the ids of the files that were processed, so only the rest stay listed.
+  onSubmit: (entries: FileEntry[]) => Promise<string[]>
 }
 
-function authorizeGoogleDocs(docUrl: string): Promise<void> {
-  const authUrl = `/api/auth/google?docUrl=${encodeURIComponent(docUrl)}&mode=export&write=true`
-  const popup = window.open(authUrl, "google-docs-auth", "popup,width=520,height=680")
-  if (!popup) return Promise.reject(new Error("Allow popups to authorize Google Docs, then try again."))
-
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      window.removeEventListener("message", handleMessage)
-      window.clearInterval(closedTimer)
-    }
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin || event.data?.type !== "gdocs-auth-success") return
-      cleanup()
-      resolve()
-    }
-    const closedTimer = window.setInterval(() => {
-      if (!popup.closed) return
-      cleanup()
-      reject(new Error("Google authorization was not completed."))
-    }, 1000)
-    window.addEventListener("message", handleMessage)
-  })
+function getGdocsUrlError(url: string): string {
+  if (!url.trim() || GOOGLE_DOCS_URL_PATTERN.test(url)) return ""
+  return "Invalid Google Docs URL. Expected: https://docs.google.com/document/d/DOC_ID/edit"
 }
 
-export default function FileUpload({ onProcessingStart, onProgress, onProcessingComplete, onGoogleDocsComplete, onError }: FileUploadProps) {
-  const [file, setFile] = useState<File | null>(null)
+export default function FileUpload({ onSubmit }: FileUploadProps) {
+  const [items, setItems] = useState<UploadItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [pages, setPages] = useState(5)
-  const [titleName, setTitleName] = useState("")
-  const [duration, setDuration] = useState("")
-  const [estimate, setEstimate] = useState<{ words: number; recommendedPages: number } | null>(null)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [gdocsUrl, setGdocsUrl] = useState("")
-  const [gdocsUrlError, setGdocsUrlError] = useState("")
+  const [fileError, setFileError] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
-  const analyzeToken = useRef(0)
+  const nextId = useRef(0)
 
-  const validateGdocsUrl = useCallback((url: string) => {
-    if (!url.trim()) {
-      setGdocsUrlError("")
-      return true
-    }
-    const pattern = /^https:\/\/docs\.google\.com\/document\/d\/[a-zA-Z0-9-_]+\/?.*$/
-    if (!pattern.test(url)) {
-      setGdocsUrlError("Invalid Google Docs URL. Expected: https://docs.google.com/document/d/DOC_ID/edit")
-      return false
-    }
-    setGdocsUrlError("")
-    return true
+  const updateItem = useCallback((id: string, patch: Partial<UploadItem>) => {
+    setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item))
   }, [])
 
-  // Reads the transcript's real length so the page target starts at a sensible value
+  // Reads each transcript's real length so its page target starts at a sensible value
   // instead of an arbitrary default the user has to guess at.
-  const analyzeFile = useCallback(async (candidate: File) => {
-    const token = ++analyzeToken.current
-    setIsAnalyzing(true)
-    setEstimate(null)
+  const analyzeFile = useCallback(async (id: string, candidate: File) => {
     try {
       const formData = new FormData()
       formData.append("file", candidate)
       const response = await fetch("/api/analyze", { method: "POST", body: formData })
       const data = await response.json()
-      // A newer file was chosen while this request was in flight; its result wins.
-      if (token !== analyzeToken.current) return
       if (response.ok && typeof data.recommendedPages === "number") {
-        setEstimate(data)
-        setPages(data.recommendedPages)
+        updateItem(id, { estimate: data, pages: data.recommendedPages })
       }
     } catch {
       // A failed estimate is not worth interrupting the user for; the manual page input still works.
     } finally {
-      if (token === analyzeToken.current) setIsAnalyzing(false)
+      updateItem(id, { isAnalyzing: false })
     }
-  }, [])
+  }, [updateItem])
 
-  const validateFile = useCallback((candidate?: File) => {
-    if (!candidate) return
-    const ext = candidate.name.toLowerCase().slice(candidate.name.lastIndexOf("."))
-    if (![".docx", ".txt"].includes(ext)) {
-      onError("Please choose a Word document in .docx format or a text file in .txt format.")
-      return
+  const addFiles = useCallback((candidates: File[]) => {
+    const rejected: string[] = []
+    const added: UploadItem[] = []
+    for (const candidate of candidates) {
+      const ext = candidate.name.toLowerCase().slice(candidate.name.lastIndexOf("."))
+      if (![".docx", ".txt"].includes(ext)) {
+        rejected.push(`${candidate.name} is not a .docx or .txt file.`)
+        continue
+      }
+      if (candidate.size > MAX_UPLOAD_BYTES) {
+        rejected.push(`${candidate.name} is larger than ${MAX_UPLOAD_LABEL}.`)
+        continue
+      }
+      added.push({
+        id: `file-${nextId.current++}`,
+        file: candidate,
+        pages: 5,
+        titleName: candidate.name.replace(/\.(docx|txt)$/i, "").replace(/[_-]+/g, " ").trim().slice(0, 150),
+        duration: "",
+        gdocsUrl: "",
+        estimate: null,
+        isAnalyzing: true,
+        gdocsUrlError: "",
+      })
     }
-    if (candidate.size > MAX_UPLOAD_BYTES) {
-      onError(`That file is larger than ${MAX_UPLOAD_LABEL}. Please choose a smaller document.`)
-      return
-    }
-    setFile(candidate)
-    if (!titleName.trim()) {
-      setTitleName(candidate.name.replace(/\.(docx|txt)$/i, "").replace(/[_-]+/g, " ").trim())
-    }
-    void analyzeFile(candidate)
-  }, [onError, analyzeFile, titleName])
+    setFileError(rejected.join(" "))
+    if (!added.length) return
+    setItems((current) => [...current, ...added])
+    for (const item of added) void analyzeFile(item.id, item.file)
+  }, [analyzeFile])
 
   const handleDrag = useCallback((event: React.DragEvent) => {
     event.preventDefault()
@@ -120,132 +98,43 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
     event.preventDefault()
     event.stopPropagation()
     setIsDragging(false)
-    validateFile(event.dataTransfer.files[0])
-  }, [validateFile])
+    if (isProcessing) return
+    addFiles(Array.from(event.dataTransfer.files))
+  }, [addFiles, isProcessing])
 
-  const handleUpload = useCallback(async () => {
-    if (!file || isProcessing) return
+  const isAnalyzing = items.some((item) => item.isAnalyzing)
+  const hasGdocsError = items.some((item) => item.gdocsUrlError)
+  const gdocsCount = items.filter((item) => item.gdocsUrl.trim() && !item.gdocsUrlError).length
 
-    // Validate Google Docs URL if provided
-    if (gdocsUrl.trim() && !validateGdocsUrl(gdocsUrl)) {
+  const handleSubmit = useCallback(async () => {
+    if (!items.length || isProcessing || isAnalyzing) return
+    const checked = items.map((item) => ({ ...item, gdocsUrlError: getGdocsUrlError(item.gdocsUrl) }))
+    if (checked.some((item) => item.gdocsUrlError)) {
+      setItems(checked)
       return
     }
 
-    const useGdocs = gdocsUrl.trim().length > 0
-    let googleAuthError: Error | null = null
-    const googleAuthorization = useGdocs
-      ? authorizeGoogleDocs(gdocsUrl).catch((error) => { googleAuthError = error instanceof Error ? error : new Error("Google authorization failed.") })
-      : Promise.resolve()
     setIsProcessing(true)
-    onProcessingStart()
     try {
-      const formData = new FormData()
-      formData.append("file", file)
-      formData.append("pages", String(pages))
-      formData.append("titleName", titleName)
-      formData.append("duration", duration)
-      const response = await fetch("/api/upload", { method: "POST", body: formData })
-      const job = await response.json()
-      if (!response.ok) throw new Error(job.error || "Failed to start note generation.")
-
-      let jobs: Array<{ id: string; targetWords: number; expanded: boolean; pageNumber?: number; pageSpan?: number; expansionAttempts?: number; retries?: number }> = job.jobs
-      const downloadName: string = job.downloadName || "Organized Notes.docx"
-      const pageCount: number = job.pageCount || pages
-      const resolvedTitleName: string = job.titleName ?? titleName
-      const resolvedDuration: string = job.duration ?? duration
-      const startedAt = Date.now()
-      let consecutivePollFailures = 0
-      let pollDelay = 750
-      onProgress({ completed: 0, total: jobs.length, progressPercent: 0 })
-
-      while (Date.now() - startedAt < 15 * 60 * 1000) {
-        await new Promise((resolve) => window.setTimeout(resolve, pollDelay))
-        pollDelay = 2000
-        try {
-          const statusResponse = await fetch("/api/status", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              jobs,
-              downloadName,
-              pageCount,
-              titleName: resolvedTitleName,
-              duration: resolvedDuration,
-              returnNotesHtml: useGdocs
-            }),
-            signal: AbortSignal.timeout(30000),
-          })
-          const contentType = statusResponse.headers.get("Content-Type") || ""
-
-          // Check for binary DOCX response first (in case generation completed)
-          if (statusResponse.ok && contentType.includes("application/vnd.openxmlformats")) {
-            // Only download direct file if not using Google Docs export
-            if (!useGdocs) {
-              const outputFile = await statusResponse.blob()
-              onProgress({ completed: jobs.length, total: jobs.length, progressPercent: 100 })
-              onProcessingComplete({ file: outputFile, downloadName, estimatedCostUsd: Number(statusResponse.headers.get("X-Estimated-Api-Cost") || 0) })
-              return
-            }
-            // If using Google Docs, generation may still be completing;
-            // continue polling loop without trying to parse binary as JSON
-            continue
-          }
-
-          const status = await statusResponse.json()
-          if (!statusResponse.ok) throw new Error(status.error || "A note section failed to generate.")
-
-          if (Array.isArray(status.jobs)) jobs = status.jobs
-          consecutivePollFailures = 0
-          onProgress({
-            completed: status.completed || 0,
-            total: status.total || jobs.length,
-            progressPercent: status.progressPercent,
-            jobStatuses: status.jobStatuses,
-          })
-
-          if (useGdocs && status.status === "completed" && typeof status.notesHtml === "string") {
-            await googleAuthorization
-            if (googleAuthError) throw googleAuthError
-
-            const exportResponse = await fetch("/api/export/gdocs", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                docUrl: gdocsUrl,
-                notesHtml: status.notesHtml,
-                title: resolvedTitleName || downloadName.replace(" - Organized Notes.docx", ""),
-                duration: resolvedDuration,
-              }),
-            })
-            const exportResult = await exportResponse.json()
-            if (!exportResponse.ok) throw new Error(exportResult.error || "Failed to write notes to Google Docs.")
-            onProgress({ completed: jobs.length, total: jobs.length, progressPercent: 100 })
-            onGoogleDocsComplete(typeof status.estimatedCostUsd === "number" ? status.estimatedCostUsd : undefined)
-            return
-          }
-        } catch (pollError) {
-          consecutivePollFailures += 1
-          if (consecutivePollFailures >= 3) throw pollError
-        }
-      }
-
-      throw new Error("Generation took longer than 15 minutes. Please try again with fewer pages or a shorter transcript.")
-    } catch (error) {
-      onError(error instanceof Error ? error.message : "An unexpected error occurred.")
+      // Called without awaiting first so a Google sign-in popup still counts as a response to the click.
+      const processedIds = await onSubmit(items.map(({ id, file, pages, titleName, duration, gdocsUrl }) => ({
+        id, file, pages, titleName, duration, gdocsUrl: gdocsUrl.trim(),
+      })))
+      setItems((current) => current.filter((item) => !processedIds.includes(item.id)))
     } finally {
       setIsProcessing(false)
     }
-  }, [file, isProcessing, onProcessingStart, onProgress, onProcessingComplete, onGoogleDocsComplete, onError, pages, titleName, duration, gdocsUrl, validateGdocsUrl])
+  }, [items, isProcessing, isAnalyzing, onSubmit])
 
   return (
     <Card className="overflow-hidden border-border/70 bg-card/95 shadow-xl shadow-primary/5 backdrop-blur">
       <CardHeader className="border-b bg-muted/25 p-6 sm:p-7">
         <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
           <span className="flex size-5 items-center justify-center rounded-md bg-primary/10">1</span>
-          Add your source
+          Add your sources
         </div>
-        <CardTitle className="text-2xl">Create a new study guide</CardTitle>
-        <CardDescription className="leading-6">Upload a class transcript and choose how much detail you need.</CardDescription>
+        <CardTitle className="text-2xl">Create new study guides</CardTitle>
+        <CardDescription className="leading-6">Upload one or more class transcripts. Each file is processed in order, one at a time.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-7 p-6 sm:p-7">
         <div
@@ -258,190 +147,180 @@ export default function FileUpload({ onProcessingStart, onProgress, onProcessing
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
           className={cn(
-            "group relative flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-5 text-center outline-none transition-all focus-visible:ring-4 focus-visible:ring-ring/20",
-            isDragging ? "border-primary bg-primary/10" : "border-border bg-muted/20 hover:border-primary/50 hover:bg-primary/[0.035]",
-            file && "border-primary/40 bg-primary/[0.035]"
+            "group relative flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-5 text-center outline-none transition-all focus-visible:ring-4 focus-visible:ring-ring/20",
+            items.length ? "min-h-32 py-6" : "min-h-52",
+            isDragging ? "border-primary bg-primary/10" : "border-border bg-muted/20 hover:border-primary/50 hover:bg-primary/[0.035]"
           )}
         >
-          <input ref={inputRef} type="file" accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(event) => validateFile(event.target.files?.[0])} />
-          {file ? (
-            <>
-              <button
-                type="button"
-                aria-label="Remove selected file"
-                className="absolute right-3 top-3 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  analyzeToken.current++
-                  setFile(null)
-                  setEstimate(null)
-                  setIsAnalyzing(false)
-                  if (inputRef.current) inputRef.current.value = ""
-                }}
-              ><X className="size-4" /></button>
-              <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"><FileText className="size-7" /></div>
-              <p className="max-w-full truncate px-6 text-sm font-semibold">{file.name}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {isAnalyzing
-                  ? "Measuring transcript length…"
-                  : estimate
-                    ? `${estimate.words.toLocaleString()} words · Ready to process`
-                    : `${(file.size / 1024).toFixed(1)} KB · Ready to process`}
-              </p>
-              <p className="mt-4 text-xs font-medium text-primary">Click to replace</p>
-            </>
-          ) : (
-            <>
-              <div className="mb-4 flex size-14 items-center justify-center rounded-2xl border bg-background text-muted-foreground shadow-sm transition-transform group-hover:-translate-y-0.5"><Upload className="size-6" /></div>
-              <p className="text-sm font-semibold">Drop your transcript here</p>
-              <p className="mt-1 text-sm text-muted-foreground">or click to browse your files</p>
-              <p className="mt-4 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">DOCX, TXT · up to {MAX_UPLOAD_LABEL}</p>
-            </>
-          )}
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+            className="hidden"
+            onChange={(event) => {
+              addFiles(Array.from(event.target.files || []))
+              event.target.value = ""
+            }}
+          />
+          <div className="mb-4 flex size-14 items-center justify-center rounded-2xl border bg-background text-muted-foreground shadow-sm transition-transform group-hover:-translate-y-0.5"><Upload className="size-6" /></div>
+          <p className="text-sm font-semibold">{items.length ? "Drop more transcripts here" : "Drop your transcripts here"}</p>
+          <p className="mt-1 text-sm text-muted-foreground">or click to browse your files</p>
+          <p className="mt-4 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">DOCX, TXT · up to {MAX_UPLOAD_LABEL} each · multiple files allowed</p>
         </div>
 
-
-        <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
-            <span className="flex size-5 items-center justify-center rounded-md bg-primary/10">2</span>
-            Set note length
-          </div>
-          <p className="mb-3 text-sm text-muted-foreground">
-            {isAnalyzing
-              ? "Reading your transcript to recommend a page count…"
-              : estimate
-                ? `Estimated ${estimate.recommendedPages} ${estimate.recommendedPages === 1 ? "page" : "pages"} based on transcript length. Choose the number of full pages to generate below.`
-                : "Upload a transcript for a recommendation, or set a page target from 1 to 80."}
+        {fileError && (
+          <p className="-mt-4 flex items-start gap-1.5 text-sm text-destructive">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            {fileError}
           </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative w-40">
-              <Input
-                id="page-count"
-                type="number"
-                min={1}
-                max={80}
-                step={1}
-                inputMode="numeric"
-                value={pages}
-                onChange={(event) => {
-                  const value = event.target.valueAsNumber
-                  if (!Number.isNaN(value)) setPages(Math.min(80, Math.max(1, Math.round(value))))
-                }}
-                className="h-12 rounded-xl pr-16 text-base font-semibold tabular-nums"
-                aria-label="Target number of pages"
-              />
-              <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                {pages === 1 ? "page" : "pages"}
-              </span>
-            </div>
-            {isAnalyzing && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-            {estimate && !isAnalyzing && pages !== estimate.recommendedPages && (
-              <button
-                type="button"
-                onClick={() => setPages(estimate.recommendedPages)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
-              >
-                <Wand2 className="size-3.5" />
-                Use recommended ({estimate.recommendedPages})
-              </button>
-            )}
-            {estimate && !isAnalyzing && pages === estimate.recommendedPages && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                <Wand2 className="size-3.5" />
-                Recommended
-              </span>
-            )}
-          </div>
-        </div>
+        )}
 
-        <div>
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
-            <span className="flex size-5 items-center justify-center rounded-md bg-primary/10">3</span>
-            Label your notes
-          </div>
-          <p className="mb-3 text-sm text-muted-foreground">Shown at the top of the generated document.</p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="title-name" className="mb-1.5 block text-xs font-medium text-muted-foreground">Class or course name</label>
-              <Input
-                id="title-name"
-                type="text"
-                placeholder="e.g. Environmental Law"
-                value={titleName}
-                onChange={(event) => setTitleName(event.target.value.slice(0, 150))}
-                className="h-12 rounded-xl text-sm"
-                aria-label="Class or course name"
-              />
+        {items.length > 0 && (
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+              <span className="flex size-5 items-center justify-center rounded-md bg-primary/10">2</span>
+              Set up each file
             </div>
-            <div>
-              <label htmlFor="duration" className="mb-1.5 block text-xs font-medium text-muted-foreground">Duration (minutes)</label>
-              <Input
-                id="duration"
-                type="text"
-                inputMode="decimal"
-                placeholder="e.g. 82.55"
-                value={duration}
-                onChange={(event) => setDuration(event.target.value.slice(0, 40))}
-                className="h-12 rounded-xl text-sm"
-                aria-label="Class duration in minutes"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">
-            <span className="flex size-5 items-center justify-center rounded-md bg-primary/10">4</span>
-            Google Docs (Optional)
-          </div>
-          <p className="mb-3 text-sm text-muted-foreground">
-            Provide a Google Docs link to write the generated notes directly into that document instead of downloading.
-            The document must be editable by your Google account. Existing content will be replaced.
-          </p>
-          <div className="relative">
-            <Link2 className="absolute left-4 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-            <Input
-              id="gdocs-url"
-              type="url"
-              placeholder="https://docs.google.com/document/d/your-doc-id/edit"
-              value={gdocsUrl}
-              onChange={(e) => { setGdocsUrl(e.target.value); validateGdocsUrl(e.target.value); }}
-              onBlur={(e) => validateGdocsUrl(e.target.value)}
-              className={cn(
-                "h-12 rounded-xl pl-12 pr-4 text-sm",
-                gdocsUrlError && "border-destructive focus-visible:ring-destructive"
-              )}
-              aria-label="Google Docs URL"
-              disabled={isProcessing || isAnalyzing}
-            />
-          </div>
-          {gdocsUrlError && (
-            <p className="mt-1.5 text-sm text-destructive flex items-center gap-1.5">
-              <AlertTriangle className="size-3.5" />
-              {gdocsUrlError}
+            <p className="mb-3 text-sm text-muted-foreground">
+              Choose the page count and labels for each transcript. Add a Google Docs link to write that file&apos;s notes
+              into the document instead of downloading them. The document must be editable by your Google account, and its
+              existing content will be replaced.
             </p>
-          )}
-          {gdocsUrl && !gdocsUrlError && (
-            <p className="mt-1.5 text-sm text-emerald-600 flex items-center gap-1.5">
-              <CheckCircle2 className="size-3.5" />
-              Valid Google Docs URL — notes will be written here
-            </p>
-          )}
-        </div>
+            <ol className="space-y-4">
+              {items.map((item, index) => (
+                <li key={item.id} className="rounded-xl border bg-muted/10 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><FileText className="size-5" /></div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">{index + 1}. {item.file.name}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {item.isAnalyzing
+                          ? "Measuring transcript length…"
+                          : item.estimate
+                            ? `${item.estimate.words.toLocaleString()} words · Recommended ${item.estimate.recommendedPages} ${item.estimate.recommendedPages === 1 ? "page" : "pages"}`
+                            : `${(item.file.size / 1024).toFixed(1)} KB`}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${item.file.name}`}
+                      disabled={isProcessing}
+                      className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      onClick={() => setItems((current) => current.filter((candidate) => candidate.id !== item.id))}
+                    ><X className="size-4" /></button>
+                  </div>
 
-        <Button size="lg" onClick={handleUpload} disabled={!file || isProcessing || isAnalyzing} className="h-12 w-full rounded-xl text-sm shadow-md shadow-primary/15">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-[8.5rem_1fr_9rem]">
+                    <div>
+                      <label htmlFor={`${item.id}-pages`} className="mb-1.5 block text-xs font-medium text-muted-foreground">Pages</label>
+                      <div className="relative">
+                        <Input
+                          id={`${item.id}-pages`}
+                          type="number"
+                          min={1}
+                          max={80}
+                          step={1}
+                          inputMode="numeric"
+                          value={item.pages}
+                          disabled={isProcessing}
+                          onChange={(event) => {
+                            const value = event.target.valueAsNumber
+                            if (!Number.isNaN(value)) updateItem(item.id, { pages: Math.min(80, Math.max(1, Math.round(value))) })
+                          }}
+                          className="h-11 rounded-xl pr-14 text-sm font-semibold tabular-nums"
+                          aria-label={`Target number of pages for ${item.file.name}`}
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                          {item.isAnalyzing ? <Loader2 className="size-3.5 animate-spin" /> : item.pages === 1 ? "page" : "pages"}
+                        </span>
+                      </div>
+                      {item.estimate && !item.isAnalyzing && item.pages !== item.estimate.recommendedPages && (
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={() => updateItem(item.id, { pages: item.estimate!.recommendedPages })}
+                          className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                        >
+                          <Wand2 className="size-3" />
+                          Use recommended ({item.estimate.recommendedPages})
+                        </button>
+                      )}
+                    </div>
+                    <div>
+                      <label htmlFor={`${item.id}-title`} className="mb-1.5 block text-xs font-medium text-muted-foreground">Class or course name</label>
+                      <Input
+                        id={`${item.id}-title`}
+                        type="text"
+                        placeholder="e.g. Environmental Law"
+                        value={item.titleName}
+                        disabled={isProcessing}
+                        onChange={(event) => updateItem(item.id, { titleName: event.target.value.slice(0, 150) })}
+                        className="h-11 rounded-xl text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor={`${item.id}-duration`} className="mb-1.5 block text-xs font-medium text-muted-foreground">Duration (minutes)</label>
+                      <Input
+                        id={`${item.id}-duration`}
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="e.g. 82.55"
+                        value={item.duration}
+                        disabled={isProcessing}
+                        onChange={(event) => updateItem(item.id, { duration: event.target.value.slice(0, 40) })}
+                        className="h-11 rounded-xl text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <label htmlFor={`${item.id}-gdocs`} className="mb-1.5 block text-xs font-medium text-muted-foreground">Google Docs link (optional)</label>
+                    <div className="relative">
+                      <Link2 className="absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id={`${item.id}-gdocs`}
+                        type="url"
+                        placeholder="https://docs.google.com/document/d/your-doc-id/edit"
+                        value={item.gdocsUrl}
+                        disabled={isProcessing}
+                        onChange={(event) => updateItem(item.id, { gdocsUrl: event.target.value, gdocsUrlError: getGdocsUrlError(event.target.value) })}
+                        className={cn(
+                          "h-11 rounded-xl pl-11 pr-4 text-sm",
+                          item.gdocsUrlError && "border-destructive focus-visible:ring-destructive"
+                        )}
+                      />
+                    </div>
+                    {item.gdocsUrlError && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-sm text-destructive">
+                        <AlertTriangle className="size-3.5" />
+                        {item.gdocsUrlError}
+                      </p>
+                    )}
+                    {item.gdocsUrl.trim() && !item.gdocsUrlError && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-sm text-emerald-600">
+                        <CheckCircle2 className="size-3.5" />
+                        Notes for this file will be written to this Google Doc
+                      </p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        <Button size="lg" onClick={handleSubmit} disabled={!items.length || isProcessing || isAnalyzing || hasGdocsError} className="h-12 w-full rounded-xl text-sm shadow-md shadow-primary/15">
           {isProcessing
             ? <><Loader2 className="animate-spin" />Creating your notes</>
             : isAnalyzing
-              ? <><Loader2 className="animate-spin" />Analyzing transcript</>
-              : gdocsUrl && !gdocsUrlError
-                ? <><Sparkles />Generate & Write to Google Docs</>
-                : <><Sparkles />Generate smart notes</>}
+              ? <><Loader2 className="animate-spin" />Analyzing transcripts</>
+              : <><Sparkles />{items.length > 1 ? `Generate notes for ${items.length} files` : "Generate smart notes"}</>}
         </Button>
         <p className="text-center text-xs text-muted-foreground">
-          {gdocsUrl && !gdocsUrlError
-            ? "Notes will be written to your Google Doc after generation (requires Google sign-in)."
-            : "Your document is used only to create your notes."}
+          {gdocsCount > 0
+            ? `${gdocsCount} of ${items.length} ${items.length === 1 ? "file" : "files"} will be written to Google Docs (requires Google sign-in); the rest will download.`
+            : "Your documents are used only to create your notes."}
         </p>
       </CardContent>
     </Card>

@@ -1,20 +1,27 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { AlertTriangle, BookOpen, BrainCircuit, CheckCircle2, Loader2, Sparkles } from "lucide-react"
-import FileUpload from "@/components/FileUpload"
+import { AlertTriangle, BookOpen, BrainCircuit, CheckCircle2, Circle, Loader2, RotateCcw, Sparkles, XCircle } from "lucide-react"
+import FileUpload, { type FileEntry } from "@/components/FileUpload"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import LoginGate from "@/components/LoginGate"
+import { authorizeGoogleDocs, generateNotes, type GenerationProgress } from "@/lib/note-generation"
 
-type AppState = "upload" | "processing" | "error" | "result"
+type AppState = "upload" | "processing"
 
-type GenerationProgress = {
-  completed: number
-  total: number
-  progressPercent?: number
-  jobStatuses?: Array<{ id: string; status: string; progress: number }>
+// skipped: failed on the first pass and waiting for its retry; failed: the retry failed too.
+type QueueStatus = "waiting" | "processing" | "completed" | "skipped" | "retrying" | "failed"
+
+type QueueItem = {
+  id: string
+  name: string
+  destination: "download" | "gdocs"
+  status: QueueStatus
+  retried: boolean
+  firstError?: string
+  error?: string
 }
 
 const benefits = [
@@ -23,14 +30,40 @@ const benefits = [
   { icon: CheckCircle2, title: "Stays grounded", copy: "Uses only information found in your uploaded document." },
 ]
 
+const queueStatusLabels: Record<QueueStatus, string> = {
+  waiting: "Waiting",
+  processing: "Processing",
+  completed: "Done",
+  skipped: "Skipped · will retry",
+  retrying: "Retrying",
+  failed: "Not processed",
+}
+
+function downloadFile(file: Blob, downloadName: string) {
+  const url = URL.createObjectURL(file)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = downloadName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function QueueStatusIcon({ status }: { status: QueueStatus }) {
+  if (status === "completed") return <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+  if (status === "processing" || status === "retrying") return <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+  if (status === "skipped") return <RotateCcw className="size-4 shrink-0 text-amber-600" />
+  if (status === "failed") return <XCircle className="size-4 shrink-0 text-destructive" />
+  return <Circle className="size-4 shrink-0 text-muted-foreground/50" />
+}
+
 export default function Home() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null)
   const [state, setState] = useState<AppState>("upload")
-  const [errorMessage, setErrorMessage] = useState("")
-  const [downloadedName, setDownloadedName] = useState("")
-  const [googleDocsComplete, setGoogleDocsComplete] = useState(false)
+  const [queue, setQueue] = useState<QueueItem[]>([])
+  const [batchFinished, setBatchFinished] = useState(false)
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress>({ completed: 0, total: 1 })
-  const [documentCost, setDocumentCost] = useState<number | null>(null)
 
   useEffect(() => {
     fetch("/api/auth/session").then((response) => response.json()).then((data) => setAuthenticated(data.authenticated === true)).catch(() => setAuthenticated(false))
@@ -39,20 +72,63 @@ export default function Home() {
   if (authenticated === null) return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Loading…</div>
   if (!authenticated) return <LoginGate onAuthenticated={() => setAuthenticated(true)} />
 
-  const handleDownload = ({ file, downloadName, estimatedCostUsd }: { file: Blob; downloadName: string; estimatedCostUsd?: number }) => {
-    const url = URL.createObjectURL(file)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = downloadName
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-    setDownloadedName(downloadName)
-    setState("result")
-    setErrorMessage("")
-    setDocumentCost(typeof estimatedCostUsd === "number" ? estimatedCostUsd : null)
+  // Files run strictly one after another. A file that fails is skipped so the rest can
+  // finish, then gets one more attempt after everything else; a second failure is reported.
+  const runBatch = async (entries: FileEntry[]): Promise<string[]> => {
+    // Opened before any await so the popup still counts as a response to the click.
+    // One authorization covers every Google Doc in the batch.
+    const gdocsEntry = entries.find((entry) => entry.gdocsUrl)
+    const googleAuthorization = gdocsEntry ? authorizeGoogleDocs(gdocsEntry.gdocsUrl) : Promise.resolve()
+    googleAuthorization.catch(() => { /* surfaced when a Google Docs file reaches its export */ })
+
+    let current: QueueItem[] = entries.map((entry) => ({
+      id: entry.id,
+      name: entry.file.name,
+      destination: entry.gdocsUrl ? "gdocs" : "download",
+      status: "waiting",
+      retried: false,
+    }))
+    const updateQueue = (id: string, patch: Partial<QueueItem>) => {
+      current = current.map((item) => item.id === id ? { ...item, ...patch } : item)
+      setQueue(current)
+    }
+    setQueue(current)
+    setBatchFinished(false)
+    setState("processing")
+
+    const attempt = async (entry: FileEntry, isRetry: boolean): Promise<boolean> => {
+      updateQueue(entry.id, { status: isRetry ? "retrying" : "processing", retried: isRetry })
+      setGenerationProgress({ completed: 0, total: 1 })
+      try {
+        const result = await generateNotes(entry, googleAuthorization, setGenerationProgress)
+        if (result.kind === "download") downloadFile(result.file, result.downloadName)
+        updateQueue(entry.id, { status: "completed" })
+        return true
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "An unexpected error occurred."
+        updateQueue(entry.id, isRetry ? { status: "failed", error: message } : { status: "skipped", firstError: message, error: message })
+        return false
+      }
+    }
+
+    const skipped: FileEntry[] = []
+    for (const entry of entries) {
+      if (!(await attempt(entry, false))) skipped.push(entry)
+    }
+    for (const entry of skipped) {
+      await attempt(entry, true)
+    }
+
+    setBatchFinished(true)
+    setState("upload")
+    return current.filter((item) => item.status === "completed").map((item) => item.id)
   }
+
+  const completedItems = queue.filter((item) => item.status === "completed")
+  const failedItems = queue.filter((item) => item.status === "failed")
+  const activeItem = queue.find((item) => item.status === "processing" || item.status === "retrying")
+  const retryTotal = queue.filter((item) => item.firstError).length
+  const retryIndex = queue.filter((item) => item.retried && item.status !== "retrying").length + 1
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_var(--color-primary-soft),_transparent_38%)]">
@@ -84,7 +160,7 @@ export default function Home() {
             Turn long lectures into notes you can actually study.
           </h1>
           <p className="mt-5 max-w-lg text-base leading-7 text-muted-foreground sm:text-lg">
-            Upload a class transcript, choose the depth you want, and get structured notes without the filler.
+            Upload your class transcripts, choose the depth you want, and get structured notes without the filler.
           </p>
 
           <div className="mt-8 grid gap-3">
@@ -103,31 +179,47 @@ export default function Home() {
         </section>
 
         <section className="min-w-0">
-          {(state === "upload" || state === "result") && downloadedName && (
+          {state === "upload" && batchFinished && completedItems.length > 0 && (
             <Alert className="mb-4 border-emerald-500/30 bg-emerald-500/5 text-emerald-800">
               <CheckCircle2 className="size-4 text-emerald-600" />
-              <AlertDescription>Your download for {downloadedName} has started.</AlertDescription>
-              {documentCost !== null && <AlertDescription className="mt-1">Estimated API cost for this document: ${documentCost.toFixed(4)}</AlertDescription>}
+              <AlertDescription>
+                <p className="font-medium">{completedItems.length} of {queue.length} {queue.length === 1 ? "file was" : "files were"} processed.</p>
+                <ul className="mt-1 space-y-0.5">
+                  {completedItems.map((item) => (
+                    <li key={item.id}>
+                      {item.name}: {item.destination === "gdocs" ? "written to your Google Doc" : "download started"}
+                      {item.retried && " (succeeded on the retry)"}
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
             </Alert>
           )}
 
-          {(state === "upload" || state === "result") && googleDocsComplete && (
-            <Alert className="mb-4 border-emerald-500/30 bg-emerald-500/5 text-emerald-800">
-              <CheckCircle2 className="size-4 text-emerald-600" />
-              <AlertDescription>The generated notes were written to your Google Doc.</AlertDescription>
-              {documentCost !== null && <AlertDescription className="mt-1">Estimated API cost for this document: ${documentCost.toFixed(4)}</AlertDescription>}
+          {state === "upload" && batchFinished && failedItems.length > 0 && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTriangle className="size-4" />
+              <AlertDescription>
+                <p className="font-medium">
+                  {failedItems.length} {failedItems.length === 1 ? "file was" : "files were"} skipped and not processed, even after a retry:
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {failedItems.map((item) => (
+                    <li key={item.id}>
+                      <span className="font-medium">{item.name}</span>: {item.error}
+                      {item.firstError && item.firstError !== item.error && ` (first attempt: ${item.firstError})`}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2">These files are still listed below so you can try them again.</p>
+              </AlertDescription>
             </Alert>
           )}
 
-          {(state === "upload" || state === "result") && (
-            <FileUpload
-              onProcessingStart={() => { setDownloadedName(""); setGoogleDocsComplete(false); setDocumentCost(null); setErrorMessage(""); setGenerationProgress({ completed: 0, total: 1 }); setState("processing") }}
-              onProgress={setGenerationProgress}
-              onProcessingComplete={handleDownload}
-              onGoogleDocsComplete={(estimatedCostUsd) => { setGoogleDocsComplete(true); setErrorMessage(""); setDocumentCost(estimatedCostUsd ?? null); setState("result") }}
-              onError={(error) => { setErrorMessage(error); setState("error") }}
-            />
-          )}
+          {/* Kept mounted while processing so files that fail stay listed for another try. */}
+          <div className={state === "processing" ? "hidden" : undefined}>
+            <FileUpload onSubmit={runBatch} />
+          </div>
 
           {state === "processing" && (
             <Card className="overflow-hidden border-border/70 shadow-xl shadow-primary/5">
@@ -137,12 +229,26 @@ export default function Home() {
                   <Loader2 className="size-9 animate-spin" />
                   <span className="absolute -right-1 -top-1 size-3 animate-pulse rounded-full bg-primary" />
                 </div>
-                <h2 className="text-xl font-semibold tracking-tight">Building your study guide</h2>
-                <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+                <h2 className="text-xl font-semibold tracking-tight">
+                  {queue.length > 1 ? "Building your study guides" : "Building your study guide"}
+                </h2>
+                {activeItem && (
+                  <p className="mt-2 max-w-sm truncate text-sm font-medium">
+                    {activeItem.status === "retrying"
+                      ? `Retrying skipped file ${retryIndex} of ${retryTotal}: ${activeItem.name}`
+                      : `File ${queue.findIndex((item) => item.id === activeItem.id) + 1} of ${queue.length}: ${activeItem.name}`}
+                  </p>
+                )}
+                <p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
                   {generationProgress.jobStatuses && generationProgress.jobStatuses.length > 0
                     ? `Processing ${generationProgress.jobStatuses.filter(j => j.status === "completed").length} of ${generationProgress.jobStatuses.length} sections`
                     : `Generating topic section ${Math.min(generationProgress.completed + 1, generationProgress.total)} of ${generationProgress.total}.`}
                 </p>
+                {generationProgress.rateLimitWaitMs && (
+                  <p className="mt-3 max-w-sm rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs leading-5 text-amber-800">
+                    The AI reached its per-minute limit. Waiting about {Math.ceil(generationProgress.rateLimitWaitMs / 1000)} seconds, then continuing automatically.
+                  </p>
+                )}
                 <div className="mt-8 w-full max-w-xs space-y-2">
                   <Progress value={generationProgress.progressPercent ?? (generationProgress.completed / generationProgress.total) * 100} />
                   <div className="flex justify-between text-xs text-muted-foreground">
@@ -158,28 +264,27 @@ export default function Home() {
                         <div key={job.id} className="flex justify-between gap-2">
                           <span>Section {idx + 1}</span>
                           <span className="text-primary">
-                            {job.status === "retrying" ? "Retrying" : job.status === "queued" ? "Queued" : `${job.progress}%`}
+                            {job.status === "retrying" ? "Retrying" : job.status === "rate_limited" ? "Waiting for AI" : job.status === "queued" ? "Queued" : `${job.progress}%`}
                           </span>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
+
+                {queue.length > 1 && (
+                  <ol className="mt-8 w-full max-w-sm space-y-1.5 text-left text-sm">
+                    {queue.map((item, index) => (
+                      <li key={item.id} className="flex items-center gap-2.5 rounded-lg border bg-muted/20 px-3 py-2">
+                        <QueueStatusIcon status={item.status} />
+                        <span className="min-w-0 flex-1 truncate">{index + 1}. {item.name}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{queueStatusLabels[item.status]}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
               </CardContent>
             </Card>
-          )}
-
-          {state === "error" && (
-            <div className="space-y-4">
-              <Alert variant="destructive"><AlertTriangle className="size-4" /><AlertDescription>{errorMessage}</AlertDescription></Alert>
-              <FileUpload
-                onProcessingStart={() => { setErrorMessage(""); setState("processing") }}
-                onProgress={setGenerationProgress}
-                onProcessingComplete={handleDownload}
-                onGoogleDocsComplete={(estimatedCostUsd) => { setGoogleDocsComplete(true); setErrorMessage(""); setDocumentCost(estimatedCostUsd ?? null); setState("result") }}
-                onError={(error) => setErrorMessage(error)}
-              />
-            </div>
           )}
         </section>
       </main>

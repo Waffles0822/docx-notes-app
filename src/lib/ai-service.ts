@@ -282,6 +282,68 @@ async function getOpenAIJson(endpoint: string, apiKey: string, timeoutMs: number
   }
 }
 
+// Thrown when the AI turns a request away under its per-minute request or token limit.
+// Those limits clear on their own, so callers wait retryAfterMs and send the request again.
+export class RateLimitError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number,
+    // Set by startBackgroundNotes: ids of sections already accepted, null where a retry is needed.
+    readonly submittedJobIds?: Array<string | null>,
+  ) {
+    super(message)
+    this.name = "RateLimitError"
+  }
+}
+
+export function getRateLimitRetryMs(error: unknown): number | null {
+  return error instanceof Error && error.name === "RateLimitError" && typeof (error as RateLimitError).retryAfterMs === "number"
+    ? (error as RateLimitError).retryAfterMs
+    : null
+}
+
+const DEFAULT_RATE_LIMIT_WAIT_MS = 20000
+const MIN_RATE_LIMIT_WAIT_MS = 2000
+const MAX_RATE_LIMIT_WAIT_MS = 60000
+
+// Returns how long to wait for a per-minute limit to clear, or null when the response is
+// not one. Billing quota, daily limits, and single requests larger than the whole limit never
+// clear by waiting a minute, so those stay ordinary errors instead of polling forever.
+function getRateLimitWaitMs(response: Response | null, data: ApiResponse): number | null {
+  const error = data?.error
+  const message: string = typeof error?.message === "string" ? error.message : ""
+  const code: string = typeof error?.code === "string" ? error.code : ""
+  if (response?.status !== 429 && code !== "rate_limit_exceeded") return null
+  if (code === "insufficient_quota" || /per day|\((RPD|TPD)\)|request too large|quota/i.test(message)) return null
+
+  // OpenAI states the wait in the message, e.g. "Please try again in 1m2.5s" or "in 20ms".
+  const stated = message.match(/try again in ((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)/i)
+  const unitMs: Record<string, number> = { ms: 1, s: 1000, m: 60000, h: 3600000 }
+  let waitMs = DEFAULT_RATE_LIMIT_WAIT_MS
+  if (stated) {
+    waitMs = Array.from(stated[1].matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g))
+      .reduce((sum, [, value, unit]) => sum + Number(value) * unitMs[unit], 0)
+  } else {
+    const retryAfter = Number(response?.headers.get("retry-after"))
+    if (Number.isFinite(retryAfter) && retryAfter > 0) waitMs = retryAfter * 1000
+  }
+  return Math.min(MAX_RATE_LIMIT_WAIT_MS, Math.max(MIN_RATE_LIMIT_WAIT_MS, Math.ceil(waitMs) + 500))
+}
+
+function throwIfRateLimited(response: Response, data: ApiResponse) {
+  const waitMs = getRateLimitWaitMs(response, data)
+  if (waitMs !== null) throw new RateLimitError(data?.error?.message || "The AI's per-minute limit was reached.", waitMs)
+}
+
+async function cancelBackgroundNotes(apiKey: string, ids: string[]) {
+  await Promise.allSettled(ids.map((id) => postOpenAIJson(
+    `https://api.openai.com/v1/responses/${encodeURIComponent(id)}/cancel`,
+    apiKey,
+    {},
+    15000
+  )))
+}
+
 function isTransientOpenAIError(message: string): boolean {
   return /timed out while connecting|request failed before a response was received|fetch failed|could not be reached because DNS lookup failed/i.test(message)
 }
@@ -293,8 +355,9 @@ type BackgroundNoteStatus = {
   error?: string
   truncated?: boolean
   createdAt?: number
-  usage?: { input: number; cached: number; output: number }
   sourceInput?: string
+  // Set when the job or its status check was turned away by the AI's per-minute limit.
+  rateLimitMs?: number
 }
 
 export type BackgroundNoteJob = {
@@ -368,6 +431,7 @@ async function submitBackgroundChunk(
   focus: string,
 ): Promise<string> {
   let lastError = "OpenAI did not accept the background request"
+  let rateLimitError: RateLimitError | null = null
   // Keep the source details available for both the draft and correction passes.
   // Sampling here can remove the very material needed to reach the length target.
   const targetRange = `${targetWords} to ${Math.ceil(targetWords * 1.08)}`
@@ -386,6 +450,11 @@ async function submitBackgroundChunk(
       }, 60000)
       if (response.ok && data?.id) return data.id
       lastError = data?.error?.message || `OpenAI returned status ${response.status}`
+      const rateLimitMs = getRateLimitWaitMs(response, data)
+      if (rateLimitMs !== null) {
+        rateLimitError = new RateLimitError(lastError, rateLimitMs)
+        break
+      }
       if (response.status < 500 && response.status !== 429) break
     } catch (error) {
       lastError = error instanceof Error ? error.message : lastError
@@ -393,37 +462,68 @@ async function submitBackgroundChunk(
     if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1500))
   }
 
-  throw new Error(lastError)
+  throw rateLimitError ?? new Error(lastError)
 }
 
-export async function startBackgroundNotes(transcript: string, pages: number): Promise<BackgroundNoteJob[]> {
+// submittedJobIds carries the sections the AI accepted on an earlier, rate-limited attempt,
+// so a retry only sends the rest instead of resending the whole document into the same limit.
+export async function startBackgroundNotes(transcript: string, pages: number, submittedJobIds: Array<string | null> = []): Promise<BackgroundNoteJob[]> {
   const apiKey = getOpenAIKey()
   const pageCount = Math.min(MAX_PAGES, Math.max(1, Math.floor(pages)))
   const jobCount = Math.ceil(pageCount / 2)
   const chunks = splitTranscript(transcript, jobCount)
+  const reusable = submittedJobIds.length === chunks.length ? submittedJobIds : []
   // Each request writes at most two pages. This keeps a concrete length budget
   // while halving concurrent provider requests and classification boundaries.
-  return Promise.all(chunks.map(async (chunk, index) => {
+  const results = await Promise.allSettled(chunks.map(async (chunk, index) => {
     const pageSpan = Math.min(2, pageCount - index * 2)
     const targetWords = WORDS_PER_PAGE * pageSpan
-    const id = await submitBackgroundChunk(apiKey, transcript, pageSpan, index + 1, chunks.length, targetWords, `${getChunkContext(transcript, index, chunks.length)}\n\n[PRIMARY ALLOCATION]\n${chunk}`)
+    const id = reusable[index] || await submitBackgroundChunk(apiKey, transcript, pageSpan, index + 1, chunks.length, targetWords, `${getChunkContext(transcript, index, chunks.length)}\n\n[PRIMARY ALLOCATION]\n${chunk}`)
     return { id, targetWords, pageNumber: index + 1, pageSpan, expanded: false, expansionAttempts: 0, retries: 0 }
   }))
+
+  const jobs = results.map((result) => result.status === "fulfilled" ? result.value : null)
+  const failures = results.flatMap((result) => result.status === "rejected" ? [result.reason] : [])
+  if (!failures.length) return jobs as BackgroundNoteJob[]
+
+  const hardFailure = failures.find((failure) => getRateLimitRetryMs(failure) === null)
+  if (hardFailure) {
+    // The document cannot be finished, so stop the sections that were accepted.
+    await cancelBackgroundNotes(apiKey, jobs.flatMap((job) => job ? [job.id] : []))
+    throw hardFailure
+  }
+  throw new RateLimitError(
+    (failures[0] as Error).message,
+    Math.max(...failures.map((failure) => getRateLimitRetryMs(failure) as number)),
+    jobs.map((job) => job?.id ?? null),
+  )
 }
 
 export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promise<BackgroundNoteJob> {
+  return resubmitBackgroundNotes(job, (job.retries || 0) + 1)
+}
+
+// A job the AI failed under its per-minute limit is sent again as-is. It does not use up
+// the single queued-job retry, because waiting out the limit is expected to succeed.
+export async function resubmitRateLimitedNotes(job: BackgroundNoteJob): Promise<BackgroundNoteJob> {
+  return resubmitBackgroundNotes(job, job.retries || 0)
+}
+
+async function resubmitBackgroundNotes(job: BackgroundNoteJob, retries: number): Promise<BackgroundNoteJob> {
   const apiKey = getOpenAIKey()
   const source = await getOpenAIJson(
     `https://api.openai.com/v1/responses/${encodeURIComponent(job.id)}`,
     apiKey,
     30000
   )
+  throwIfRateLimited(source.response, source.data)
   if (!source.response.ok || !source.data.input) {
     throw new Error(source.data?.error?.message || "Could not recover the queued note section.")
   }
 
   const { response, data } = await postOpenAIJson("https://api.openai.com/v1/responses", apiKey, {
     model: process.env.OPENAI_MODEL || "gpt-6-luna",
+    ...(typeof source.data.previous_response_id === "string" ? { previous_response_id: source.data.previous_response_id } : {}),
     instructions: source.data.instructions || SYSTEM_PROMPT,
     input: source.data.input,
     text: { verbosity: "high" },
@@ -431,6 +531,7 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
     max_output_tokens: source.data.max_output_tokens || computeMaxOutputTokens(job.targetWords),
     background: true,
   }, 60000)
+  throwIfRateLimited(response, data)
   if (!response.ok || !data?.id) {
     throw new Error(data?.error?.message || "OpenAI could not restart the queued note section.")
   }
@@ -447,7 +548,7 @@ export async function retryQueuedBackgroundNotes(job: BackgroundNoteJob): Promis
     // The replacement can proceed even if the already-stalled response cannot be cancelled.
   }
 
-  return { ...job, id: data.id, retries: (job.retries || 0) + 1 }
+  return { ...job, id: data.id, retries }
 }
 
 export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords: number, wasTruncated = false, sourceInput = ""): Promise<BackgroundNoteJob> {
@@ -465,6 +566,7 @@ export async function expandBackgroundNotes(job: BackgroundNoteJob, currentWords
     max_output_tokens: computeMaxOutputTokens(job.targetWords * (wasTruncated ? 2 : 1.5)),
     background: true,
   }, 60000)
+  throwIfRateLimited(response, data)
   if (!response.ok || !data?.id) {
     throw new Error(data?.error?.message || "OpenAI could not start the length correction pass")
   }
@@ -486,6 +588,9 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
     throw error
   }
   if (!response.ok) {
+    // Only the status check was turned away; the job itself keeps running.
+    const rateLimitMs = getRateLimitWaitMs(response, data)
+    if (rateLimitMs !== null) return { id, status: "in_progress", rateLimitMs }
     return { id, status: "failed", error: data?.error?.message || `Could not retrieve ${id}` }
   }
   const extractOutputText = () => data.output_text || data.output
@@ -501,11 +606,6 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
         notes: cleanResponse(extractOutputText()),
         sourceInput: typeof data.input === "string" ? data.input : undefined,
         createdAt: data.created_at,
-        usage: {
-          input: Number(data.usage?.input_tokens || 0),
-          cached: Number(data.usage?.input_tokens_details?.cached_tokens || 0),
-          output: Number(data.usage?.output_tokens || 0),
-        },
       }
     } catch (error) {
       return { id, status: "failed", error: error instanceof Error ? error.message : "OpenAI returned empty notes" }
@@ -527,6 +627,7 @@ export async function getBackgroundNoteStatus(id: string): Promise<BackgroundNot
       id,
       status: data.status,
       error: data.error?.message || data.incomplete_details?.reason || `OpenAI job ${data.status}`,
+      rateLimitMs: data.status === "failed" ? getRateLimitWaitMs(null, data) ?? undefined : undefined,
     }
   }
   return { id, status: data.status || "in_progress", createdAt: data.created_at }
@@ -544,7 +645,8 @@ export type TopicOutline = {
 
 export type TopicGroupingResult = {
   groups: { heading: string; members: string[] }[]
-  usage?: { input: number; cached: number; output: number }
+  // Set when the AI's per-minute limit turned the grouping request away.
+  retryAfterMs?: number
 }
 
 const TOPIC_GROUPING_PROMPT = `The lecture notes below were written in separate allocations, so related material is spread across many sub-headers. Group the sub-headers that cover the same topic or fall in the same subject category under one shared sub-header, so the final document has fewer headings.
@@ -596,22 +698,17 @@ export async function groupTopicHeadings(topics: TopicOutline[]): Promise<TopicG
       max_output_tokens: 4000,
       store: false,
     }, 25000)
-    if (!response.ok) return { groups: [] }
+    if (!response.ok) return { groups: [], retryAfterMs: getRateLimitWaitMs(response, data) ?? undefined }
 
     const outputText = data.output_text || data.output
       ?.flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content || [])
       .filter((item: { type?: string }) => item.type === "output_text")
       .map((item: { text?: string }) => item.text || "").join("")
-    const usage = {
-      input: Number(data.usage?.input_tokens || 0),
-      cached: Number(data.usage?.input_tokens_details?.cached_tokens || 0),
-      output: Number(data.usage?.output_tokens || 0),
-    }
     let parsed: { groups?: unknown }
     try {
       parsed = JSON.parse(outputText || "{}")
     } catch {
-      return { groups: [], usage }
+      return { groups: [] }
     }
 
     // Only trust members that name a real sub-header, each claimed by one group.
@@ -627,7 +724,7 @@ export async function groupTopicHeadings(topics: TopicOutline[]): Promise<TopicG
       members.forEach((member) => claimed.add(member))
       return members.length && !(members.length === 1 && members[0] === heading) ? [{ heading, members }] : []
     })
-    return { groups, usage }
+    return { groups }
   } catch {
     return { groups: [] }
   }

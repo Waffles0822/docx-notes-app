@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { expandBackgroundNotes, getBackgroundNoteStatus, getExpansionAttempts, groupTopicHeadings, MAX_EXPANSION_ATTEMPTS, mergeNoteSections, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
+import { expandBackgroundNotes, getBackgroundNoteStatus, getExpansionAttempts, getRateLimitRetryMs, groupTopicHeadings, MAX_EXPANSION_ATTEMPTS, mergeNoteSections, resubmitRateLimitedNotes, retryQueuedBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
 import { applyTopicGroups, createNotesDocx, parseNotes, type Bullet } from "@/lib/docx-generator"
-import { estimateDocumentCost } from "@/lib/credits"
 
 type JobStatus = {
   id: string
@@ -35,17 +34,19 @@ function getJobProgress(status: string, truncated: boolean): number {
   return 10 // queued/starting
 }
 
-function getEstimatedDocumentCost(statuses: Array<{ usage?: { input: number; cached: number; output: number } }>): number {
-  const usage = statuses.reduce((total, status) => ({
-    input: total.input + (status.usage?.input || 0),
-    cached: total.cached + (status.usage?.cached || 0),
-    output: total.output + (status.usage?.output || 0),
-  }), { input: 0, cached: 0, output: 0 })
-  return estimateDocumentCost(usage, {
-    input: Number(process.env.OPENAI_INPUT_COST_PER_1M || 0),
-    cached: Number(process.env.OPENAI_CACHED_INPUT_COST_PER_1M || 0),
-    output: Number(process.env.OPENAI_OUTPUT_COST_PER_1M || 0),
+// Keeps the old job wherever the AI's per-minute limit turned its replacement away, so the
+// next poll tries again; retryAfterMs tells the client how long to wait before that poll.
+function settleJobUpdates(jobs: BackgroundNoteJob[], results: PromiseSettledResult<BackgroundNoteJob>[]) {
+  let retryAfterMs: number | undefined
+  const rateLimited = results.map((result) => result.status === "rejected" && getRateLimitRetryMs(result.reason) !== null)
+  const updatedJobs = results.map((result, index) => {
+    if (result.status === "fulfilled") return result.value
+    const waitMs = getRateLimitRetryMs(result.reason)
+    if (waitMs === null) throw result.reason
+    retryAfterMs = Math.max(retryAfterMs ?? 0, waitMs)
+    return jobs[index]
   })
+  return { jobs: updatedJobs, rateLimited, retryAfterMs }
 }
 
 export async function POST(request: NextRequest) {
@@ -90,9 +91,28 @@ export async function POST(request: NextRequest) {
       progress: getJobProgress(status.status, status.truncated || false),
     }))
 
-    const failed = statuses.find((job) => ["failed", "cancelled", "incomplete"].includes(job.status))
+    const failed = statuses.find((job) => ["failed", "cancelled", "incomplete"].includes(job.status) && !job.rateLimitMs)
     if (failed) {
       return NextResponse.json({ error: failed.error || "A note section failed to generate." }, { status: 500 })
+    }
+
+    // The AI dropped these jobs under its per-minute limit, so send them again instead of failing the file.
+    const droppedByRateLimit = statuses.map((status) => status.status === "failed" && Boolean(status.rateLimitMs))
+    if (droppedByRateLimit.some(Boolean)) {
+      const settled = settleJobUpdates(jobs, await Promise.allSettled(jobs.map((job, index) =>
+        droppedByRateLimit[index] ? resubmitRateLimitedNotes(job) : Promise.resolve(job)
+      )))
+      return NextResponse.json({
+        status: "processing",
+        completed: statuses.filter((status) => status.status === "completed").length,
+        total: statuses.length,
+        jobs: settled.jobs,
+        jobStatuses: jobStatuses.map((jobStatus, index) => droppedByRateLimit[index]
+          ? { id: settled.jobs[index].id, status: settled.rateLimited[index] ? "rate_limited" : "retrying", progress: 10 }
+          : jobStatus),
+        progressPercent: Math.round(jobStatuses.reduce((sum, item, index) => sum + (droppedByRateLimit[index] ? 10 : item.progress), 0) / jobStatuses.length),
+        retryAfterMs: settled.retryAfterMs,
+      })
     }
 
     const now = Date.now()
@@ -111,18 +131,20 @@ export async function POST(request: NextRequest) {
 
     const needsRetry = jobs.map((job, index) => (job.retries || 0) < 1 && queuedAges[index] >= QUEUED_RETRY_MS)
     if (needsRetry.some(Boolean)) {
-      const updatedJobs = await Promise.all(jobs.map((job, index) =>
-        needsRetry[index] ? retryQueuedBackgroundNotes(job) : job
-      ))
+      const settled = settleJobUpdates(jobs, await Promise.allSettled(jobs.map((job, index) =>
+        needsRetry[index] ? retryQueuedBackgroundNotes(job) : Promise.resolve(job)
+      )))
+      const updatedJobs = settled.jobs
       return NextResponse.json({
         status: "processing",
         completed: statuses.filter((status) => status.status === "completed").length,
         total: statuses.length,
         jobs: updatedJobs,
         jobStatuses: jobStatuses.map((jobStatus, index) => needsRetry[index]
-          ? { id: updatedJobs[index].id, status: "retrying", progress: 10 }
+          ? { id: updatedJobs[index].id, status: settled.rateLimited[index] ? "rate_limited" : "retrying", progress: 10 }
           : jobStatus),
         progressPercent: Math.round(jobStatuses.reduce((sum, item) => sum + item.progress, 0) / jobStatuses.length),
+        retryAfterMs: settled.retryAfterMs,
       })
     }
 
@@ -131,6 +153,8 @@ export async function POST(request: NextRequest) {
     const progressPercent = Math.round(totalProgress / jobStatuses.length)
 
     if (completed.length !== statuses.length) {
+      // Status checks the AI turned away under its per-minute limit; their jobs keep running.
+      const statusCheckWaitMs = Math.max(0, ...statuses.map((status) => status.rateLimitMs || 0))
       return NextResponse.json({
         status: "processing",
         completed: completed.length,
@@ -138,6 +162,7 @@ export async function POST(request: NextRequest) {
         jobs,
         jobStatuses,
         progressPercent,
+        retryAfterMs: statusCheckWaitMs || undefined,
       })
     }
 
@@ -151,19 +176,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "A note section is still cut off after two automatic corrections. Please try generating again." }, { status: 422 })
     }
     if (needsExpansion.some((needed, index) => needed && getExpansionAttempts(jobs[index]) < MAX_EXPANSION_ATTEMPTS)) {
-      const updatedJobs = await Promise.all(jobs.map((job, index) =>
+      const settled = settleJobUpdates(jobs, await Promise.allSettled(jobs.map((job, index) =>
         needsExpansion[index] && getExpansionAttempts(job) < MAX_EXPANSION_ATTEMPTS
           ? expandBackgroundNotes(job, wordCounts[index], statuses[index].truncated, statuses[index].sourceInput)
-          : job
-      ))
+          : Promise.resolve(job)
+      )))
+      const updatedJobs = settled.jobs
       return NextResponse.json({
         status: "processing",
         completed: needsExpansion.filter((needed) => !needed).length,
         total: jobs.length,
         jobs: updatedJobs,
-        jobStatuses: jobStatuses.map((js, idx) => needsExpansion[idx] ? { ...js, id: updatedJobs[idx].id, status: "expanding", progress: 75 } : js),
+        jobStatuses: jobStatuses.map((js, idx) => needsExpansion[idx] ? { ...js, id: updatedJobs[idx].id, status: settled.rateLimited[idx] ? "rate_limited" : "expanding", progress: 75 } : js),
         progressPercent: Math.round(jobStatuses.reduce((sum, js, idx) => sum + (needsExpansion[idx] ? 75 : js.progress), 0) / jobStatuses.length),
         correctingLength: true,
+        retryAfterMs: settled.retryAfterMs,
       })
     }
 
@@ -175,15 +202,26 @@ export async function POST(request: NextRequest) {
       heading: section.heading,
       labels: section.bullets.map((bullet) => bullet.text),
     })))
+    // Grouping only tidies headings, but a per-minute limit clears soon, so wait it out
+    // and assemble on a later poll rather than exporting ungrouped notes.
+    if (grouping.retryAfterMs) {
+      return NextResponse.json({
+        status: "processing",
+        completed: jobs.length,
+        total: jobs.length,
+        jobs,
+        jobStatuses,
+        progressPercent: 99,
+        retryAfterMs: grouping.retryAfterMs,
+      })
+    }
     const notes = applyTopicGroups(combined, grouping.groups)
-    const estimatedCostUsd = getEstimatedDocumentCost([...statuses, { usage: grouping.usage }])
 
     if (returnNotesHtml) {
       return NextResponse.json({
         status: "completed",
         notesHtml: notes,
         downloadName,
-        estimatedCostUsd,
         progressPercent: 100,
       })
     }
@@ -195,7 +233,6 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`,
         "X-Download-Name": encodeURIComponent(downloadName),
-        "X-Estimated-Api-Cost": String(estimatedCostUsd),
         "Cache-Control": "no-store",
       },
     })

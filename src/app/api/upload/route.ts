@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { parseFile } from "@/lib/docx-parser"
-import { startBackgroundNotes, type BackgroundNoteJob } from "@/lib/ai-service"
+import { getRateLimitRetryMs, startBackgroundNotes, type BackgroundNoteJob, type RateLimitError } from "@/lib/ai-service"
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "@/lib/upload-limits"
 
 const SUPPORTED_EXTENSIONS = [".docx", ".txt"]
@@ -16,6 +16,18 @@ function getFileExtension(fileName: string): string {
   return lastDot === -1 ? "" : fileName.slice(lastDot).toLowerCase()
 }
 
+// Sections the AI accepted before a per-minute limit turned the rest away, in page order.
+function parseSubmittedJobIds(value: FormDataEntryValue | null): Array<string | null> {
+  if (typeof value !== "string") return []
+  try {
+    const parsed = JSON.parse(value)
+    if (!Array.isArray(parsed) || parsed.length > 40) return []
+    return parsed.every((id) => id === null || (typeof id === "string" && /^resp_[a-zA-Z0-9_-]+$/.test(id))) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
@@ -24,6 +36,7 @@ export async function POST(request: NextRequest) {
     const pages = Math.min(Math.max(parseInt(pagesStr || "1", 10) || 1, 1), 80)
     const titleName = ((formData.get("titleName") as string | null) || "").trim().slice(0, 150)
     const duration = ((formData.get("duration") as string | null) || "").trim().slice(0, 40)
+    const submittedJobIds = parseSubmittedJobIds(formData.get("submittedJobIds"))
 
     if (!file) {
       return NextResponse.json(
@@ -60,8 +73,21 @@ export async function POST(request: NextRequest) {
 
     let jobs: BackgroundNoteJob[]
     try {
-      jobs = await startBackgroundNotes(transcript, pages)
+      jobs = await startBackgroundNotes(transcript, pages, submittedJobIds)
     } catch (aiError: unknown) {
+      const retryAfterMs = getRateLimitRetryMs(aiError)
+      if (retryAfterMs !== null) {
+        // The client waits this out and uploads again, sending back the sections already accepted.
+        return NextResponse.json(
+          {
+            error: "The AI's per-minute limit was reached.",
+            rateLimited: true,
+            retryAfterMs,
+            submittedJobIds: (aiError as RateLimitError).submittedJobIds ?? submittedJobIds,
+          },
+          { status: 429 }
+        )
+      }
       console.error("AI service error:", aiError)
       const message = aiError instanceof Error ? aiError.message : "Failed to start note generation."
       return NextResponse.json(
